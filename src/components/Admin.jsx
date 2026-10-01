@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { useInstituciones, useEstadisticas } from '../hooks/useFirebase';
 import DashboardExcel from './DashboardExcel';
+import { etiquetaEstado, formatearFecha } from '../utils/excel';
+import { sileo } from './sileo'
 import GestionUsuarios from './GestionUsuarios';  // 🆕 Importar el componente
 
 const Admin = () => {
@@ -31,7 +33,7 @@ const Admin = () => {
     setIsLoading(true);
     setTimeout(() => {
       setIsLoading(false);
-      alert('Datos actualizados exitosamente');
+      sileo.success({ title: 'Datos actualizados', description: 'El sistema se actualizó exitosamente.' });
     }, 1500);
   };
 
@@ -52,6 +54,10 @@ const Admin = () => {
     // 🆕 CALCULAR INSTITUCIONES PENDIENTES
     const institucionesPendientes = instituciones ? instituciones.filter(inst => 
       inst.estado === 'pendiente' || inst.estado === 'Pendiente'
+    ).length : 0;
+
+    const institucionesActivas = instituciones ? instituciones.filter(inst =>
+      inst.estado === 'activo' || !inst.estado
     ).length : 0;
 
     const institucionesVencidas = instituciones ? instituciones.filter(inst => 
@@ -77,7 +83,7 @@ const Admin = () => {
               <Users className="text-green-600 mr-3" size={32} />
               <div>
                 <p className="text-sm text-gray-500">Instituciones Activas</p>
-                <p className="text-2xl font-bold text-gray-800">{estadisticas.institucionesActivas || 0}</p>
+                <p className="text-2xl font-bold text-gray-800">{institucionesActivas}</p>
               </div>
             </div>
           </div>
@@ -98,7 +104,7 @@ const Admin = () => {
             <div className="flex items-center">
               <AlertCircle className="text-red-600 mr-3" size={32} />
               <div>
-                <p className="text-sm text-gray-500">Instituciones Vencidas/No Renovada</p>
+                <p className="text-sm text-gray-500">Instituciones No Renovadas</p>
                 <p className="text-2xl font-bold text-gray-800">{institucionesVencidas}</p>
               </div>
             </div>
@@ -139,11 +145,12 @@ const Admin = () => {
                     <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                       institucion.estado === 'activo' ? 'bg-green-100 text-green-700' :
                       institucion.estado === 'pendiente' ? 'bg-yellow-100 text-yellow-700' :
+                      institucion.estado === 'vencido' ? 'bg-red-100 text-red-700' :
                       'bg-gray-100 text-gray-700'
                     }`}>
-                      {institucion.estado || 'activo'}
+                      {etiquetaEstado(institucion.estado)}
                     </span>
-                    <p className="text-xs text-gray-400 mt-1">{institucion.fechaCreacion}</p>
+                    <p className="text-xs text-gray-400 mt-1">{formatearFecha(institucion.fechaCreacion)}</p>
                   </div>
                 </div>
               ))}

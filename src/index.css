@@ -3,3 +3,95 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ✨ Fix descripción sileo - blanco completo */
+[data-sileo-viewport] [data-sileo-description] {
+  color: white !important;
+}
+
+/* ✨ Fix z-index - toast siempre encima de modales */
+[data-sileo-viewport] {
+  z-index: 9999 !important;
+}
+
+/* Estilos de cristal esmerilado (Glassmorphism) */
+.glass-card-dark {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-card-light {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.04);
+}
+
+.glass-panel-translucent {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Patrón de cuadrícula tecnológica */
+.grid-overlay {
+  background-image: radial-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Brillo ambiental (Radial gradients) */
+.glow-spot-orange {
+  background: radial-gradient(circle at center, rgba(255, 81, 5, 0.05) 0%, transparent 60%);
+}
+
+.glow-spot-purple {
+  background: radial-gradient(circle at center, rgba(168, 85, 247, 0.04) 0%, transparent 60%);
+}
+
+/* Scrollbar estilizada */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.25);
+  border-radius: 9999px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.45);
+}
+
+/* Animación pulsante suave para consumos peligrosos */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+    opacity: 0.9;
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+    opacity: 1;
+  }
+}
+
+.danger-pulse {
+  animation: glow-pulse 2s infinite ease-in-out;
+}
+/* Campos numéricos sin flechas de subir/bajar (evita cambios accidentales con la rueda del mouse) */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

@@ -1,170 +1,256 @@
-// src/components/GestionUsuarios.jsx - VERSIÓN SEGURA
-import React, { useState } from 'react';
+// src/components/GestionUsuarios.jsx
+import React, { useState, useEffect } from 'react';
+import { sileo } from './sileo';
+import { confirmar } from '../utils/confirmar';
 import { 
-  Users, 
-  UserPlus, 
-  X, 
-  Trash2, 
-  Shield, 
-  User,
-  Mail,
-  Key,
-  CheckCircle,
-  AlertCircle,
-  Loader2
+  Users, UserPlus, X, Trash2, Shield, User,
+  CheckCircle, AlertCircle, Loader2, Calculator, Edit3, PieChart, ShieldAlert
 } from 'lucide-react';
-import { useUsuarios } from '../hooks/useFirebase'; // ← Usar el hook seguro
+import { useUsuarios } from '../hooks/useFirebase';
 
-const ModalAgregarUsuario = ({ onClose, onSave }) => {
+const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
+  const isEdit = !!usuarioAEditar;
+  
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rol, setRol] = useState('usuario');
+  const [tipoPerfil, setTipoPerfil] = useState('usuario'); 
+  const [area, setArea] = useState('');
+  
+  const [permisos, setPermisos] = useState({
+    instituciones: { ver: true, agregar: false, editar: false, eliminar: false, registrarConsumo: false, comentar: false, verHistorial: false },
+    contabilidad: { acceso: false, nivel: 'ninguno', dashboardFacturacion: false },
+    monitoreoContratos: { acceso: true }
+  });
+
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async () => {
-    if (nombre.trim() && email.trim() && password.trim()) {
-      setSaving(true);
-      const resultado = await onSave({
-        nombre: nombre.trim(),
-        email: email.trim(),
-        password: password.trim(),
-        rol
-      });
-      
-      if (resultado.success) {
-        setNombre('');
-        setEmail('');
-        setPassword('');
-        setRol('usuario');
-        onClose();
-      } else {
-        alert(`Error al crear usuario: ${resultado.error}`);
+  // Cargar datos SOLO al abrir el modal en modo edición
+  useEffect(() => {
+    if (isEdit && usuarioAEditar) {
+      setNombre(usuarioAEditar.nombre || '');
+      setEmail(usuarioAEditar.email || '');
+      setTipoPerfil(usuarioAEditar.rol || 'usuario');
+      setArea(usuarioAEditar.area || '');
+      if (usuarioAEditar.permisos) {
+        setPermisos({
+          ...usuarioAEditar.permisos,
+          monitoreoContratos: {
+            acceso: usuarioAEditar.permisos.monitoreoContratos?.acceso !== false
+          },
+          contabilidad: {
+            ...usuarioAEditar.permisos.contabilidad,
+            dashboardFacturacion: usuarioAEditar.permisos.contabilidad?.dashboardFacturacion || false
+          }
+        });
       }
-      setSaving(false);
-    } else {
-      alert("Por favor, complete todos los campos.");
+    }
+  }, [isEdit, usuarioAEditar]);
+
+  // ✨ LA SOLUCIÓN: Aplicar plantillas SOLO cuando se cambia el selector manualmente
+  const handlePerfilChange = (e) => {
+    const nuevoPerfil = e.target.value;
+    setTipoPerfil(nuevoPerfil);
+
+    if (nuevoPerfil === 'admin') {
+      setPermisos({
+        instituciones: { ver: true, agregar: true, editar: true, eliminar: true, registrarConsumo: true, comentar: true, verHistorial: true },
+        contabilidad: { acceso: true, nivel: 'full', dashboardFacturacion: true },
+        monitoreoContratos: { acceso: true }
+      });
+    } else if (nuevoPerfil === 'usuario') {
+      setPermisos({
+        instituciones: { ver: true, agregar: false, editar: false, eliminar: false, registrarConsumo: false, comentar: false, verHistorial: false },
+        contabilidad: { acceso: false, nivel: 'ninguno', dashboardFacturacion: false },
+        monitoreoContratos: { acceso: true }
+      });
+    } else if (nuevoPerfil === 'contabilidad') {
+      setPermisos({
+        instituciones: { ver: true, agregar: false, editar: false, eliminar: false, registrarConsumo: false, comentar: false, verHistorial: false },
+        contabilidad: { acceso: true, nivel: 'vista', dashboardFacturacion: true },
+        monitoreoContratos: { acceso: false }
+      });
     }
   };
 
+  const handlePermisoChange = (categoria, permiso, valor) => {
+    setPermisos(prev => ({
+      ...prev,
+      [categoria]: {
+        ...prev[categoria],
+        [permiso]: valor
+      }
+    }));
+  };
+
+  const handleSubmit = async () => {
+    if (nombre.trim() && email.trim()) {
+      if (!isEdit && !password.trim()) {
+        sileo.warning({ title: 'Campo requerido', description: 'Por favor, ingrese una contraseña para el nuevo usuario.' });
+        return;
+      }
+
+      setSaving(true);
+      
+      if (isEdit) {
+        const resultado = await onEdit(usuarioAEditar.uid, {
+          nombre: nombre.trim(),
+          email: email.trim(),
+          rol: tipoPerfil,
+          area: area,
+          permisos: permisos 
+        });
+        if (resultado.success) onClose();
+        else sileo.error({ title: 'Error al editar usuario', description: resultado.error });
+      } else {
+        const resultado = await onSave({
+          nombre: nombre.trim(),
+          email: email.trim(),
+          password: password.trim(),
+          rol: tipoPerfil,
+          area: area,
+          permisos: permisos 
+        });
+        if (resultado.success) onClose();
+        else sileo.error({ title: 'Error al crear usuario', description: resultado.error });
+      }
+      setSaving(false);
+    } else {
+      sileo.warning({ title: 'Campos incompletos', description: 'Por favor, complete todos los campos requeridos.' });
+    }
+  };
+
+  const ToggleSwitch = ({ label, isChecked, onChange, disabled }) => (
+    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+      <span className={`text-sm ${disabled ? 'text-gray-400' : 'text-gray-700'}`}>{label}</span>
+      <button type="button" disabled={disabled} onClick={() => onChange(!isChecked)} className={`${isChecked ? 'bg-blue-600' : 'bg-gray-200'} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none`}>
+        <span className={`${isChecked ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`} />
+      </button>
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-md">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold text-gray-800">Nuevo Usuario</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" disabled={saving}>
-            <X size={24} />
-          </button>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white p-6 md:p-8 rounded-lg shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-6 sticky top-0 bg-white z-10 pb-4 border-b">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center">
+            {isEdit ? <Edit3 className="mr-2 text-blue-600"/> : <UserPlus className="mr-2 text-blue-600"/>}
+            {isEdit ? 'Editar Usuario y Permisos' : 'Nuevo Usuario y Permisos'}
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" disabled={saving}><X size={24} /></button>
         </div>
         
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <User size={16} className="inline mr-1" />
-              Nombre Completo
-            </label>
-            <input 
-              type="text"
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Ej: Juan Pérez"
-              disabled={saving}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <Mail size={16} className="inline mr-1" />
-              Correo Electrónico
-            </label>
-            <input 
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Ej: juan@empresa.com"
-              disabled={saving}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <Key size={16} className="inline mr-1" />
-              Contraseña
-            </label>
-            <input 
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Mínimo 6 caracteres"
-              disabled={saving}
-              minLength="6"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Firebase requiere mínimo 6 caracteres
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tipo de Usuario
-            </label>
-            <select 
-              value={rol}
-              onChange={(e) => setRol(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              disabled={saving}
-            >
-              <option value="usuario">👤 Usuario - Gestión de instituciones</option>
-              <option value="admin">🛡️ Administrador - Acceso completo</option>
-            </select>
-          </div>
-
-          {/* Información del rol seleccionado */}
-          <div className="bg-blue-50 p-3 rounded-md">
-            <div className="flex items-center">
-              {rol === 'admin' ? (
-                <Shield className="w-5 h-5 text-blue-600 mr-2" />
-              ) : (
-                <User className="w-5 h-5 text-blue-600 mr-2" />
-              )}
-              <span className="text-sm text-blue-800">
-                {rol === 'admin' 
-                  ? 'Acceso completo: Dashboard, Instituciones, Admin y Gestión de Usuarios'
-                  : 'Acceso limitado: Dashboard e Instituciones (sin gestión de usuarios)'
-                }
-              </span>
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre Completo</label>
+              <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" disabled={saving} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={`w-full p-2.5 border border-gray-300 rounded-lg outline-none ${isEdit ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'focus:ring-2 focus:ring-blue-500'}`} disabled={saving || isEdit} />
             </div>
           </div>
-          
-          {/* Advertencia de seguridad */}
-          <div className="bg-yellow-50 p-3 rounded-md border border-yellow-200">
-            <div className="flex items-center">
-              <AlertCircle className="w-5 h-5 text-yellow-600 mr-2" />
-              <span className="text-sm text-yellow-800">
-                Este usuario será creado en Firebase Authentication y podrá acceder al sistema.
-              </span>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {!isEdit && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña (Min 6 car.)</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" minLength="6" disabled={saving} />
+              </div>
+            )}
+            <div className={isEdit ? "md:col-span-2" : ""}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Perfil Base</label>
+              <select value={tipoPerfil} onChange={handlePerfilChange} className="w-full p-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none" disabled={saving}>
+                <option value="usuario">👤 Operador (Instituciones)</option>
+                <option value="contabilidad">📊 Contabilidad</option>
+                <option value="admin">🛡️ Administrador (Acceso Total)</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Área / Departamento</label>
+              <select value={area} onChange={(e) => setArea(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none" disabled={saving}>
+                <option value="">Seleccione un área...</option>
+                <option value="Informática">Informática</option>
+                <option value="Contabilidad">Contabilidad</option>
+                <option value="Gerencia">Gerencia</option>
+                <option value="Marketing">Marketing</option>
+                <option value="ATC">ATC</option>
+                <option value="Administración">Administración</option>
+                <option value="Comercial">Comercial</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="bg-gray-50 p-5 rounded-xl border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+              <Shield className="w-5 h-5 mr-2 text-blue-600" /> Configuración de Permisos (Personalizable)
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                <h4 className="font-bold text-gray-800 border-b pb-2 mb-3 flex items-center"><User size={18} className="mr-2 text-gray-500"/> Módulo Instituciones</h4>
+                <ToggleSwitch label="Agregar Institución" disabled={tipoPerfil === 'admin'} isChecked={permisos.instituciones.agregar} onChange={(v) => handlePermisoChange('instituciones', 'agregar', v)} />
+                <ToggleSwitch label="Editar Institución" disabled={tipoPerfil === 'admin'} isChecked={permisos.instituciones.editar} onChange={(v) => handlePermisoChange('instituciones', 'editar', v)} />
+                <ToggleSwitch label="Eliminar Institución" disabled={tipoPerfil === 'admin'} isChecked={permisos.instituciones.eliminar} onChange={(v) => handlePermisoChange('instituciones', 'eliminar', v)} />
+                <ToggleSwitch label="Registrar Consumos" disabled={tipoPerfil === 'admin'} isChecked={permisos.instituciones.registrarConsumo} onChange={(v) => handlePermisoChange('instituciones', 'registrarConsumo', v)} />
+                <ToggleSwitch label="Gestionar Comentarios" disabled={tipoPerfil === 'admin'} isChecked={permisos.instituciones.comentar} onChange={(v) => handlePermisoChange('instituciones', 'comentar', v)} />
+                <ToggleSwitch label="Ver Historial" disabled={tipoPerfil === 'admin'} isChecked={permisos.instituciones.verHistorial} onChange={(v) => handlePermisoChange('instituciones', 'verHistorial', v)} />
+              </div>
+
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                <h4 className="font-bold text-gray-800 border-b pb-2 mb-3 flex items-center"><Calculator size={18} className="mr-2 text-purple-500"/> Módulo Contabilidad</h4>
+                
+                <div className="mb-2">
+                  <ToggleSwitch 
+                    label="Acceso a Dashboard Facturación" 
+                    disabled={tipoPerfil === 'admin'}
+                    isChecked={permisos.contabilidad.dashboardFacturacion} 
+                    onChange={(v) => handlePermisoChange('contabilidad', 'dashboardFacturacion', v)} 
+                  />
+                </div>
+
+                <ToggleSwitch 
+                  label="Habilitar Módulo Facturación" 
+                  disabled={tipoPerfil === 'admin'}
+                  isChecked={permisos.contabilidad.acceso} 
+                  onChange={(v) => {
+                    handlePermisoChange('contabilidad', 'acceso', v);
+                    if(!v) handlePermisoChange('contabilidad', 'nivel', 'ninguno');
+                    else if(permisos.contabilidad.nivel === 'ninguno') handlePermisoChange('contabilidad', 'nivel', 'vista');
+                  }} 
+                />
+                
+                {permisos.contabilidad.acceso && (
+                  <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-100">
+                    <label className="block text-sm font-bold text-purple-800 mb-3">Nivel de Acceso en Facturas</label>
+                    <div className="flex flex-col space-y-3">
+                      <label className="flex items-center cursor-pointer">
+                        <input type="radio" disabled={tipoPerfil === 'admin'} name="nivelContabilidad" value="vista" checked={permisos.contabilidad.nivel === 'vista'} onChange={() => handlePermisoChange('contabilidad', 'nivel', 'vista')} className="w-4 h-4 text-purple-600" />
+                        <span className="ml-2 text-sm text-gray-700">Solo Vista (Lectura)</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="radio" disabled={tipoPerfil === 'admin'} name="nivelContabilidad" value="full" checked={permisos.contabilidad.nivel === 'full'} onChange={() => handlePermisoChange('contabilidad', 'nivel', 'full')} className="w-4 h-4 text-purple-600" />
+                        <span className="ml-2 text-sm text-gray-700 font-medium">Full (Crear/Editar Pagos)</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 md:col-span-2">
+                <h4 className="font-bold text-gray-800 border-b pb-2 mb-3 flex items-center"><ShieldAlert size={18} className="mr-2 text-brand-500"/> Módulo Monitoreo Contratos</h4>
+                <ToggleSwitch label="Acceso a Monitoreo Contratos" disabled={tipoPerfil === 'admin'} isChecked={permisos.monitoreoContratos?.acceso !== false} onChange={(v) => handlePermisoChange('monitoreoContratos', 'acceso', v)} />
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="mt-8 flex justify-end space-x-4">
-          <button 
-            onClick={onClose} 
-            className="px-6 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
-            disabled={saving}
-          >
-            Cancelar
-          </button>
-          <button 
-            onClick={handleSubmit} 
-            className="px-6 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
-            disabled={saving}
-          >
-            {saving && <Loader2 size={16} className="animate-spin" />}
-            <span>{saving ? 'Creando en Firebase...' : 'Crear Usuario'}</span>
+        <div className="mt-8 flex justify-end space-x-4 border-t pt-4">
+          <button onClick={onClose} className="px-6 py-2.5 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors font-medium" disabled={saving}>Cancelar</button>
+          <button onClick={handleSubmit} className="px-6 py-2.5 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors flex items-center font-medium shadow-sm disabled:opacity-50" disabled={saving}>
+            {saving && <Loader2 size={16} className="animate-spin mr-2" />}
+            {saving ? 'Guardando...' : (isEdit ? 'Actualizar Usuario' : 'Crear Usuario')}
           </button>
         </div>
       </div>
@@ -174,265 +260,96 @@ const ModalAgregarUsuario = ({ onClose, onSave }) => {
 
 const GestionUsuarios = () => {
   const [showModal, setShowModal] = useState(false);
-  
-  // 🔐 USAR EL HOOK SEGURO CON FIREBASE
-  const { 
-    usuarios, 
-    loading, 
-    error, 
-    agregarUsuario, 
-    eliminarUsuario, 
-    toggleUsuarioActivo 
-  } = useUsuarios();
+  const [usuarioSeleccionado, setUsuarioSeleccionado] = useState(null); 
+  const { usuarios, loading, error, agregarUsuario, eliminarUsuario, toggleUsuarioActivo, editarUsuario } = useUsuarios();
 
-  // Función para agregar nuevo usuario - ahora conecta con Firebase
   const handleSave = async (nuevoUsuario) => {
-    console.log("🔐 Creando nuevo usuario en Firebase:", nuevoUsuario.email);
     const resultado = await agregarUsuario(nuevoUsuario);
-    
-    if (resultado.success) {
-      alert(`Usuario "${nuevoUsuario.nombre}" creado exitosamente en Firebase!`);
-    }
-    
+    if (resultado.success) sileo.success({ title: 'Usuario creado', description: `"${nuevoUsuario.nombre}" fue creado exitosamente.` });
     return resultado;
   };
 
-  // Función para eliminar usuario - ahora conecta con Firebase
-  const handleDelete = async (uid, nombre) => {
-    if (window.confirm(`¿Estás seguro de que quieres eliminar al usuario "${nombre}"?\n\nEsta acción eliminará el usuario de la base de datos.`)) {
-      const resultado = await eliminarUsuario(uid, nombre);
-      
-      if (resultado.success) {
-        alert(`Usuario "${nombre}" eliminado exitosamente!`);
-      } else {
-        alert(`Error al eliminar: ${resultado.error}`);
-      }
-    }
+  const handleEdit = async (uid, datos) => {
+    const resultado = await editarUsuario(uid, datos);
+    if (resultado.success) sileo.success({ title: 'Usuario actualizado', description: `"${datos.nombre}" fue actualizado exitosamente.` });
+    return resultado;
   };
 
-  // Función para cambiar estado activo/inactivo - ahora conecta con Firebase
+  const handleDelete = async (uid, nombre) => {
+    confirmar(
+      'Eliminar usuario',
+      `¿Estás seguro de que quieres eliminar al usuario "${nombre}"? Esta acción no se puede deshacer.`,
+      async () => {
+        const resultado = await eliminarUsuario(uid, nombre);
+        if (resultado.success) sileo.success({ title: 'Usuario eliminado', description: `"${nombre}" fue eliminado exitosamente.` });
+        else sileo.error({ title: 'Error al eliminar', description: resultado.error });
+      }
+    );
+  };
+
   const handleToggleActivo = async (uid) => {
     const resultado = await toggleUsuarioActivo(uid);
-    
-    if (!resultado.success) {
-      alert(`Error: ${resultado.error}`);
-    }
+    if (!resultado.success) sileo.error({ title: 'Error', description: resultado.error });
   };
 
-  // Mostrar loading
-  if (loading && usuarios.length === 0) {
-    return (
-      <div className="p-6 sm:p-10 bg-gray-50 min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 size={48} className="animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600">Cargando usuarios desde Firebase...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Mostrar error
-  if (error) {
-    return (
-      <div className="p-6 sm:p-10 bg-gray-50 min-h-screen flex items-center justify-center">
-        <div className="text-center bg-red-50 p-8 rounded-lg border border-red-200">
-          <AlertCircle size={48} className="text-red-600 mx-auto mb-4" />
-          <p className="text-red-600 font-medium">Error al cargar usuarios</p>
-          <p className="text-red-500 text-sm mt-2">{error}</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
-          >
-            Reintentar
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (loading && usuarios.length === 0) return <div className="p-10 flex justify-center"><Loader2 size={48} className="animate-spin text-blue-600" /></div>;
 
   return (
     <div className="p-6 sm:p-10 bg-gray-50 min-h-screen">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
+      <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-            <Users size={32} className="mr-3 text-blue-700"/>
-            Gestión de Usuarios
-          </h1>
-          <p className="text-gray-600 mt-1">
-            Administra los usuarios del sistema MiPyme Monitor
-          </p>
-          <p className="text-sm text-blue-600 mt-1">
-            🔐 Conectado con Firebase Authentication
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900 flex items-center"><Users size={32} className="mr-3 text-blue-700"/> Gestión de Usuarios</h1>
         </div>
-        <button 
-          onClick={() => setShowModal(true)}
-          className="bg-blue-600 text-white px-5 py-3 rounded-lg font-semibold flex items-center hover:bg-blue-700 transition-all shadow-sm"
-          disabled={loading}
-        >
-          <UserPlus size={20} className="mr-2"/>
-          Agregar Usuario
+        <button onClick={() => { setUsuarioSeleccionado(null); setShowModal(true); }} className="bg-blue-600 text-white px-5 py-3 rounded-lg font-semibold flex items-center hover:bg-blue-700 shadow-sm">
+          <UserPlus size={20} className="mr-2"/> Nuevo Usuario
         </button>
       </div>
-      
-      {/* Estadísticas */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-          <div className="flex items-center">
-            <Users className="text-blue-600 mr-3" size={24} />
-            <div>
-              <p className="text-sm text-gray-500">Total Usuarios</p>
-              <p className="text-2xl font-bold text-gray-800">{usuarios.length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-          <div className="flex items-center">
-            <Shield className="text-green-600 mr-3" size={24} />
-            <div>
-              <p className="text-sm text-gray-500">Administradores</p>
-              <p className="text-2xl font-bold text-gray-800">
-                {usuarios.filter(u => u.rol === 'admin').length}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
-          <div className="flex items-center">
-            <CheckCircle className="text-purple-600 mr-3" size={24} />
-            <div>
-              <p className="text-sm text-gray-500">Usuarios Activos</p>
-              <p className="text-2xl font-bold text-gray-800">
-                {usuarios.filter(u => u.activo).length}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Lista de usuarios */}
       <div className="bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-800">Lista de Usuarios</h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Usuarios registrados en Firebase Authentication
-          </p>
-        </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Usuario
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Rol
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Último Acceso
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Acciones
-                </th>
+        <table className="w-full text-left border-collapse">
+          <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+            <tr>
+              <th className="px-6 py-4">Usuario</th>
+              <th className="px-6 py-4">Rol / Perfil</th>
+              <th className="px-6 py-4">Estado</th>
+              <th className="px-6 py-4 text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {usuarios.map((usuario) => (
+              <tr key={usuario.uid} className="hover:bg-gray-50">
+                <td className="px-6 py-4">
+                  <div className="flex items-center">
+                    <div className={`h-10 w-10 rounded-full flex items-center justify-center ${usuario.rol === 'admin' ? 'bg-blue-100' : usuario.rol === 'contabilidad' ? 'bg-purple-100' : 'bg-gray-100'}`}>
+                      {usuario.rol === 'admin' ? <Shield className="text-blue-600" size={20} /> : usuario.rol === 'contabilidad' ? <Calculator className="text-purple-600" size={20} /> : <User className="text-gray-600" size={20} />}
+                    </div>
+                    <div className="ml-4">
+                      <div className="text-sm font-bold text-gray-900">{usuario.nombre} <span className="ml-1 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded border border-gray-200">{usuario.area || 'Sin Dato área'}</span></div>
+                      <div className="text-sm text-gray-500">{usuario.email}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${usuario.rol === 'admin' ? 'bg-blue-100 text-blue-800' : usuario.rol === 'contabilidad' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'}`}>
+                    {usuario.rol === 'admin' ? '🛡️ Admin' : usuario.rol === 'contabilidad' ? '📊 Contabilidad' : '👤 Operador'}
+                  </span>
+                </td>
+                <td className="px-6 py-4">
+                  <button onClick={() => handleToggleActivo(usuario.uid)} className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${usuario.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    {usuario.activo ? <><CheckCircle size={14} className="mr-1" /> Activo</> : <><AlertCircle size={14} className="mr-1" /> Inactivo</>}
+                  </button>
+                </td>
+                <td className="px-6 py-4 text-right flex justify-end space-x-2">
+                  <button onClick={() => { setUsuarioSeleccionado(usuario); setShowModal(true); }} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-lg" title="Editar"><Edit3 size={18} /></button>
+                  <button onClick={() => handleDelete(usuario.uid, usuario.nombre)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-lg" title="Eliminar"><Trash2 size={18} /></button>
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {usuarios.map((usuario) => (
-                <tr key={usuario.uid} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center ${
-                        usuario.rol === 'admin' ? 'bg-blue-100' : 'bg-gray-100'
-                      }`}>
-                        {usuario.rol === 'admin' ? (
-                          <Shield className="text-blue-600" size={20} />
-                        ) : (
-                          <User className="text-gray-600" size={20} />
-                        )}
-                      </div>
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">{usuario.nombre}</div>
-                        <div className="text-sm text-gray-500">{usuario.email}</div>
-                        <div className="text-xs text-gray-400">ID: {usuario.uid?.slice(0, 8)}...</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      usuario.rol === 'admin' 
-                        ? 'bg-blue-100 text-blue-800' 
-                        : 'bg-gray-100 text-gray-800'
-                    }`}>
-                      {usuario.rol === 'admin' ? '🛡️ Admin' : '👤 Usuario'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <button
-                      onClick={() => handleToggleActivo(usuario.uid)}
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors ${
-                        usuario.activo 
-                          ? 'bg-green-100 text-green-800 hover:bg-green-200' 
-                          : 'bg-red-100 text-red-800 hover:bg-red-200'
-                      }`}
-                      disabled={loading}
-                    >
-                      {usuario.activo ? (
-                        <>
-                          <CheckCircle size={12} className="mr-1" />
-                          Activo
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle size={12} className="mr-1" />
-                          Inactivo
-                        </>
-                      )}
-                    </button>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {usuario.ultimoAcceso}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex space-x-2">
-                      <button 
-                        onClick={() => handleDelete(usuario.uid, usuario.nombre)}
-                        className="text-red-600 hover:text-red-800 hover:bg-red-50 p-1 rounded transition-colors"
-                        title="Eliminar usuario"
-                        disabled={loading}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        
-        {usuarios.length === 0 && !loading && (
-          <div className="text-center py-8 text-gray-500">
-            <Users className="mx-auto mb-2" size={32} />
-            <p>No hay usuarios registrados</p>
-            <p className="text-sm">Crea el primer usuario para comenzar</p>
-          </div>
-        )}
+            ))}
+          </tbody>
+        </table>
       </div>
-
-      {/* Modal */}
-      {showModal && (
-        <ModalAgregarUsuario 
-          onClose={() => setShowModal(false)} 
-          onSave={handleSave} 
-        />
-      )}
+      {showModal && <ModalUsuario usuarioAEditar={usuarioSeleccionado} onClose={() => { setShowModal(false); setUsuarioSeleccionado(null); }} onSave={handleSave} onEdit={handleEdit} />}
     </div>
   );
 };
-
 export default GestionUsuarios;

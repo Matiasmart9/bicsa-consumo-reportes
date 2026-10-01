@@ -10,13 +10,17 @@ import {
   Clock,
   Save,
   AlertCircle,
-  Loader2
+  Loader2,
+  Pin
 } from 'lucide-react';
-import { useComentarios } from '../hooks/useFirebase';
+import { useComentarios, useUsuarios } from '../hooks/useFirebase';
 import { auth } from '../firebase';
+import { sileo } from './sileo';
+import { confirmar } from '../utils/confirmar';
 
 const ModalComentarios = ({ institucion, onClose }) => {
   const [nuevoComentario, setNuevoComentario] = useState('');
+  const [etiqueta, setEtiqueta] = useState('General');
   const [comentarioEditando, setComentarioEditando] = useState(null);
   const [textoEditando, setTextoEditando] = useState('');
   const [saving, setSaving] = useState(false);
@@ -27,14 +31,21 @@ const ModalComentarios = ({ institucion, onClose }) => {
     error,
     agregarComentario,
     editarComentario,
-    eliminarComentario 
+    eliminarComentario,
+    toggleFijarComentario
   } = useComentarios(institucion.id);
 
+  const { usuarios } = useUsuarios();
   const currentUser = auth.currentUser;
+
+  const getNombreUsuario = (uid, defaultName) => {
+    const usuario = usuarios?.find(u => u.uid === uid || u.id === uid);
+    return usuario?.nombre || defaultName;
+  };
 
   const handleAgregarComentario = async () => {
     if (!nuevoComentario.trim()) {
-      alert('Por favor, escribe un comentario antes de enviarlo.');
+      sileo.warning({ title: 'Campo vacío', description: 'Por favor, escribe un comentario antes de enviarlo.' });
       return;
     }
 
@@ -42,17 +53,18 @@ const ModalComentarios = ({ institucion, onClose }) => {
     try {
       const resultado = await agregarComentario({
         texto: nuevoComentario.trim(),
-        institucionId: institucion.id
+        institucionId: institucion.id,
+        etiqueta
       });
 
-      if (resultado.success) {
-        setNuevoComentario('');
-        // No necesitamos alert porque el comentario aparece inmediatamente
+      if (!resultado.success) {
+        sileo.error({ title: 'Error al agregar comentario', description: resultado.error });
       } else {
-        alert(`Error al agregar comentario: ${resultado.error}`);
+        setNuevoComentario('');
+        setEtiqueta('General');
       }
     } catch (error) {
-      alert(`Error inesperado: ${error.message}`);
+      sileo.error({ title: 'Error inesperado', description: error.message });
     } finally {
       setSaving(false);
     }
@@ -60,7 +72,7 @@ const ModalComentarios = ({ institucion, onClose }) => {
 
   const handleEditarComentario = async (comentarioId) => {
     if (!textoEditando.trim()) {
-      alert('El comentario no puede estar vacío.');
+      sileo.warning({ title: 'Campo vacío', description: 'El comentario no puede estar vacío.' });
       return;
     }
 
@@ -72,32 +84,33 @@ const ModalComentarios = ({ institucion, onClose }) => {
         setComentarioEditando(null);
         setTextoEditando('');
       } else {
-        alert(`Error al editar comentario: ${resultado.error}`);
+        sileo.error({ title: 'Error al editar comentario', description: resultado.error });
       }
     } catch (error) {
-      alert(`Error inesperado: ${error.message}`);
+      sileo.error({ title: 'Error inesperado', description: error.message });
     } finally {
       setSaving(false);
     }
   };
 
   const handleEliminarComentario = async (comentarioId, autorNombre) => {
-    if (window.confirm(`¿Estás seguro de que quieres eliminar este comentario?\n\nEsta acción no se puede deshacer.`)) {
-      setSaving(true);
-      try {
-        const resultado = await eliminarComentario(comentarioId);
-        
-        if (resultado.success) {
-          // El comentario desaparecerá automáticamente por el listener en tiempo real
-        } else {
-          alert(`Error al eliminar comentario: ${resultado.error}`);
+    confirmar(
+      'Eliminar comentario',
+      `¿Estás seguro de que quieres eliminar este comentario? Esta acción no se puede deshacer.`,
+      async () => {
+        setSaving(true);
+        try {
+          const resultado = await eliminarComentario(comentarioId);
+          if (!resultado.success) {
+            sileo.error({ title: 'Error al eliminar comentario', description: resultado.error });
+          }
+        } catch (error) {
+          sileo.error({ title: 'Error inesperado', description: error.message });
+        } finally {
+          setSaving(false);
         }
-      } catch (error) {
-        alert(`Error inesperado: ${error.message}`);
-      } finally {
-        setSaving(false);
       }
-    }
+    );
   };
 
   const iniciarEdicion = (comentario) => {
@@ -129,25 +142,38 @@ const ModalComentarios = ({ institucion, onClose }) => {
     return currentUser && comentario.autorUid === currentUser.uid;
   };
 
+  const parseMensajes = (texto) => {
+    if (!texto) return null;
+    const regex = /(@\w+)/g;
+    const parts = texto.split(regex);
+    return parts.map((part, i) => {
+      if (regex.test(part)) {
+        return <span key={i} className="font-bold text-blue-700 bg-blue-100 px-1 rounded-sm">{part}</span>;
+      }
+      return part;
+    });
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+      {/* Añadimos flex y flex-col al contenedor principal para que los hijos respeten el max-h */}
+      <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         
-        {/* Header */}
-        <div className="bg-blue-600 text-white p-6">
+        {/* Header - Aplicamos el degradado Naranja/Ámbar */}
+        <div className="bg-gradient-to-r from-orange-600 to-amber-500 text-white p-6 shrink-0">
           <div className="flex justify-between items-center">
             <div>
-              <h2 className="text-2xl font-bold flex items-center">
+              <h2 className="text-2xl font-bold flex items-center drop-shadow-sm">
                 <MessageCircle className="mr-3" size={28} />
                 Comentarios - {institucion.nombre}
               </h2>
-              <p className="text-blue-100 text-sm mt-1">
+              <p className="text-orange-100 text-sm mt-1 font-medium">
                 Espacio para notas, observaciones y comunicación del equipo
               </p>
             </div>
             <button 
               onClick={onClose} 
-              className="text-blue-100 hover:text-white transition-colors"
+              className="text-orange-100 hover:text-white transition-colors p-1"
               disabled={saving}
             >
               <X size={24} />
@@ -155,14 +181,14 @@ const ModalComentarios = ({ institucion, onClose }) => {
           </div>
         </div>
 
-        {/* Contenido */}
-        <div className="flex flex-col h-[600px]">
+        {/* Contenido - Quitamos el h-[600px] fijo y usamos flex-1 overflow-hidden */}
+        <div className="flex flex-col flex-1 overflow-hidden">
           
-          {/* Lista de comentarios */}
+          {/* Lista de comentarios - Esta parte es la que hace el scroll (overflow-y-auto) */}
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {loading && comentarios.length === 0 ? (
               <div className="text-center py-8">
-                <Loader2 size={32} className="animate-spin text-blue-600 mx-auto mb-2" />
+                <Loader2 size={32} className="animate-spin text-orange-500 mx-auto mb-2" />
                 <p className="text-gray-600">Cargando comentarios...</p>
               </div>
             ) : error ? (
@@ -178,28 +204,41 @@ const ModalComentarios = ({ institucion, onClose }) => {
               </div>
             ) : (
               comentarios.map((comentario) => (
-                <div key={comentario.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div key={comentario.id} className={`rounded-lg p-4 border shadow-sm transition-all ${comentario.fijado ? 'border-amber-400 bg-amber-50' : 'bg-gray-50 border-gray-200'}`}>
                   
                   {/* Header del comentario */}
                   <div className="flex justify-between items-start mb-3">
                     <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-inner ${comentario.fijado ? 'bg-amber-600' : 'bg-orange-500'}`}>
                         <User size={20} className="text-white" />
                       </div>
                       <div>
-                        <div className="font-medium text-gray-800">{comentario.autorNombre}</div>
+                        <div className="font-bold text-gray-800 flex items-center flex-wrap gap-2">
+                          {getNombreUsuario(comentario.autorUid, comentario.autorNombre)}
+                          <span className="text-[10px] px-2 py-0.5 bg-gray-200 text-gray-700 rounded-full font-bold uppercase tracking-wider">{comentario.autorArea || (comentario.etiqueta === 'General' ? 'Sin Dato área' : (comentario.etiqueta || 'Sin Dato área'))}</span>
+                          {comentario.fijado && <span className="text-[10px] px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-bold uppercase tracking-wider">📌 Fijado</span>}
+                        </div>
                         <div className="text-sm text-gray-500">{comentario.autorEmail}</div>
                       </div>
                     </div>
                     
-                    {/* Acciones (solo para el autor) */}
+                    {/* Acciones */}
                     {puedeEditar(comentario) && (
                       <div className="flex space-x-2">
+                        <button
+                          onClick={() => toggleFijarComentario(comentario.id, comentario.fijado || false)}
+                          className={`p-1.5 rounded transition-colors ${comentario.fijado ? 'text-amber-600 hover:bg-amber-100' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+                          title={comentario.fijado ? "Desfijar comentario" : "Fijar comentario"}
+                          disabled={saving}
+                        >
+                          <Pin size={16} className={comentario.fijado ? "fill-amber-600" : ""} />
+                        </button>
+                        
                         {comentarioEditando === comentario.id ? (
                           <div className="flex space-x-1">
                             <button
                               onClick={() => handleEditarComentario(comentario.id)}
-                              className="text-green-600 hover:text-green-800 p-1 rounded transition-colors"
+                              className="text-green-600 hover:text-green-800 hover:bg-green-50 p-1.5 rounded transition-colors"
                               title="Guardar cambios"
                               disabled={saving}
                             >
@@ -207,7 +246,7 @@ const ModalComentarios = ({ institucion, onClose }) => {
                             </button>
                             <button
                               onClick={cancelarEdicion}
-                              className="text-gray-600 hover:text-gray-800 p-1 rounded transition-colors"
+                              className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 p-1.5 rounded transition-colors"
                               title="Cancelar edición"
                               disabled={saving}
                             >
@@ -218,7 +257,7 @@ const ModalComentarios = ({ institucion, onClose }) => {
                           <div className="flex space-x-1">
                             <button
                               onClick={() => iniciarEdicion(comentario)}
-                              className="text-blue-600 hover:text-blue-800 p-1 rounded transition-colors"
+                              className="text-orange-500 hover:text-orange-700 hover:bg-orange-50 p-1.5 rounded transition-colors"
                               title="Editar comentario"
                               disabled={saving}
                             >
@@ -226,7 +265,7 @@ const ModalComentarios = ({ institucion, onClose }) => {
                             </button>
                             <button
                               onClick={() => handleEliminarComentario(comentario.id, comentario.autorNombre)}
-                              className="text-red-600 hover:text-red-800 p-1 rounded transition-colors"
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded transition-colors"
                               title="Eliminar comentario"
                               disabled={saving}
                             >
@@ -244,27 +283,27 @@ const ModalComentarios = ({ institucion, onClose }) => {
                       <textarea
                         value={textoEditando}
                         onChange={(e) => setTextoEditando(e.target.value)}
-                        className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
                         rows="3"
                         placeholder="Edita tu comentario..."
                         disabled={saving}
                       />
                     ) : (
-                      <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
-                        {comentario.texto}
+                      <p className="text-gray-700 leading-relaxed whitespace-pre-wrap pl-13">
+                        {parseMensajes(comentario.texto)}
                       </p>
                     )}
                   </div>
 
                   {/* Footer del comentario */}
-                  <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-200">
-                    <div className="flex items-center">
-                      <Clock size={12} className="mr-1" />
+                  <div className="flex items-center justify-between text-xs text-gray-500 pt-3 border-t border-gray-200 mt-2">
+                    <div className="flex items-center font-medium">
+                      <Clock size={12} className="mr-1.5 text-orange-400" />
                       <span>Publicado: {formatearFecha(comentario.fechaCreacion)}</span>
                     </div>
                     {comentario.fechaModificacion && (
-                      <div className="flex items-center">
-                        <Edit3 size={12} className="mr-1" />
+                      <div className="flex items-center font-medium">
+                        <Edit3 size={12} className="mr-1.5 text-orange-400" />
                         <span>Editado: {formatearFecha(comentario.fechaModificacion)}</span>
                       </div>
                     )}
@@ -274,15 +313,17 @@ const ModalComentarios = ({ institucion, onClose }) => {
             )}
           </div>
 
-          {/* Área para nuevo comentario */}
-            <div className="border-t border-gray-200 p-6 bg-gray-50">
+          {/* Área para nuevo comentario - Aplicamos shrink-0 para que nunca se oculte ni achique */}
+            <div className="border-t border-gray-200 p-6 bg-gray-50 shrink-0">
             <div className="flex items-start space-x-4">
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center flex-shrink-0 shadow-inner">
                 <User size={20} className="text-white" />
                 </div>
                 <div className="flex-1">
-                <div className="text-sm text-gray-600 mb-2">
-                    Comentando como: <span className="font-medium">{currentUser?.displayName || currentUser?.email}</span>
+                <div className="flex justify-between items-center mb-2">
+                    <div className="text-sm text-gray-600">
+                        Comentando como: <span className="font-bold text-orange-700">{getNombreUsuario(currentUser?.uid, currentUser?.displayName || currentUser?.email)}</span>
+                    </div>
                 </div>
                 <textarea
                     value={nuevoComentario}
@@ -293,20 +334,20 @@ const ModalComentarios = ({ institucion, onClose }) => {
                         handleAgregarComentario();
                     }
                     }}
-                    className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-shadow"
                     rows="3"
                     placeholder="Escribe tu comentario... (Enter para enviar, Shift+Enter para nueva línea)"
                     disabled={saving}
                     maxLength="500"
                 />
                 <div className="flex justify-between items-center mt-3">
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs font-medium text-gray-500">
                     {nuevoComentario.length}/500 caracteres
                     </div>
                     <button
                     onClick={handleAgregarComentario}
                     disabled={saving || !nuevoComentario.trim() || nuevoComentario.length > 500}
-                    className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium flex items-center hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-orange-600 text-white px-6 py-2 rounded-lg font-bold flex items-center hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     >
                     {saving ? (
                         <>
@@ -338,12 +379,12 @@ export const BotonComentarios = ({ institucion, comentariosCount = 0 }) => {
     <>
       <button 
         onClick={() => setShowModal(true)}
-        className="bg-yellow-400 text-white p-3 rounded-lg hover:bg-yellow-600 transition-colors relative"
+        className="bg-orange-500 text-white p-3 rounded-lg hover:bg-orange-600 transition-colors relative shadow-sm"
         title="Ver y agregar comentarios"
       >
         <MessageCircle size={18} />
         {comentariosCount > 0 && (
-          <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+          <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center border-2 border-white">
             {comentariosCount > 9 ? '9+' : comentariosCount}
           </span>
         )}

@@ -1,27 +1,30 @@
 // src/hooks/useFirebase.js
 import { useState, useEffect } from 'react';
 import { 
-  collection, 
-  addDoc, 
-  getDocs, 
-  deleteDoc, 
-  doc, 
-  updateDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  serverTimestamp,
-  setDoc,
-  getDoc,
-  where
+  collection, addDoc, getDocs, deleteDoc, doc, updateDoc,
+  onSnapshot, query, orderBy, serverTimestamp, setDoc, getDoc, where
 } from 'firebase/firestore';
 import { 
-  createUserWithEmailAndPassword,
-  updateProfile,
-  deleteUser,
-  onAuthStateChanged
+  createUserWithEmailAndPassword, updateProfile, deleteUser, onAuthStateChanged
 } from 'firebase/auth';
 import { auth, db } from '../firebase';
+
+// ✨ NUEVA FUNCIÓN GLOBAL DE AUDITORÍA
+export const logAuditoria = async (institucionId, accion, detalles) => {
+  try {
+    const usuario = auth.currentUser?.email || 'Sistema';
+    await addDoc(collection(db, 'auditoria'), {
+      institucionId: institucionId || 'N/A',
+      accion,
+      detalles,
+      usuario,
+      fecha: serverTimestamp()
+    });
+    console.log(`📝 Auditoría registrada: ${accion}`);
+  } catch (e) {
+    console.error("Error registrando auditoría:", e);
+  }
+};
 
 // Hook para manejar instituciones
 export const useInstituciones = () => {
@@ -29,7 +32,6 @@ export const useInstituciones = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Función para calcular fecha de vencimiento
   const calcularFechaVencimiento = (fechaInicioOrDuracion, duracionMeses = null) => {
     try {
       let fechaInicio, duracion;
@@ -43,12 +45,10 @@ export const useInstituciones = () => {
       }
       
       if (isNaN(fechaInicio.getTime())) {
-        console.error('Fecha de inicio inválida:', fechaInicioOrDuracion);
         return new Date().toISOString().split('T')[0];
       }
       
       if (isNaN(duracion) || duracion <= 0) {
-        console.error('Duración inválida:', duracion);
         return new Date().toISOString().split('T')[0];
       }
       
@@ -57,12 +57,10 @@ export const useInstituciones = () => {
       
       return fechaVencimiento.toISOString().split('T')[0];
     } catch (error) {
-      console.error('Error calculando fecha vencimiento:', error);
       return new Date().toISOString().split('T')[0];
     }
   };
 
-  // Cargar instituciones en tiempo real
   useEffect(() => {
     const q = query(collection(db, 'instituciones'), orderBy('fechaCreacion', 'desc'));
     
@@ -85,24 +83,24 @@ export const useInstituciones = () => {
         setLoading(false);
       },
       (error) => {
-        console.error("Error al cargar instituciones:", error);
         setError(error.message);
         setLoading(false);
       }
     );
-
     return () => unsubscribe();
   }, []);
 
-  // Agregar nueva institución
   const agregarInstitucion = async (nuevaInstitucion) => {
     try {
       setLoading(true);
-      
       const fechaInicio = nuevaInstitucion.fechaInicio || new Date().toISOString().split('T')[0];
       
       const institucionCompleta = {
         nombre: nuevaInstitucion.nombre,
+        categoria: nuevaInstitucion.categoria || 'Sin Categoría',
+        seguimientoConsumo: nuevaInstitucion.seguimientoConsumo || null,
+        montoTotal: nuevaInstitucion.montoTotal || 0, // ✨ NUEVO
+        plazoMeses: nuevaInstitucion.plazoMeses || 1, // ✨ NUEVO
         estado: 'activo',
         contrato: {
           asignadas: nuevaInstitucion.consultas,
@@ -118,10 +116,25 @@ export const useInstituciones = () => {
       };
 
       const docRef = await addDoc(collection(db, 'instituciones'), institucionCompleta);
-      console.log("Institución agregada con ID: ", docRef.id);
+      
+      // ✨ CREAR BORRADOR EN FACTURACIÓN AUTOMÁTICAMENTE
+      await addDoc(collection(db, 'facturas'), {
+        institucionId: docRef.id,
+        institucionNombre: nuevaInstitucion.nombre,
+        categoria: nuevaInstitucion.categoria || 'Sin Categoría',
+        montoTotal: nuevaInstitucion.montoTotal || 0,
+        plazoMeses: nuevaInstitucion.plazoMeses || 1,
+        estadoGeneral: 'incompleta', // Estado que indica que falta RUC y Nro Factura
+        cuotas: [], 
+        notas: [], 
+        fechaCreacion: serverTimestamp()
+      });
+
+      // ✨ REGISTRAR AUDITORÍA
+      await logAuditoria(docRef.id, 'Creación de Institución', `Se creó ${nuevaInstitucion.nombre} como ${nuevaInstitucion.categoria}.`);
+      
       return { success: true, id: docRef.id };
     } catch (error) {
-      console.error("Error al agregar institución:", error);
       setError(error.message);
       return { success: false, error: error.message };
     } finally {
@@ -129,18 +142,14 @@ export const useInstituciones = () => {
     }
   };
 
-  // Editar institución con estados y renovación
   const editarInstitucion = async (id, datosActualizados) => {
     try {
       const institucionActual = instituciones.find(inst => inst.id === id);
-      if (!institucionActual) {
-        return { success: false, error: 'Institución no encontrada' };
-      }
+      if (!institucionActual) return { success: false, error: 'No encontrada' };
 
       const institucionRef = doc(db, 'instituciones', id);
       
       if (datosActualizados.estado === 'renovacion' && datosActualizados.nuevaFechaInicio) {
-        // ✨ CREAR HISTORIAL CON COMENTARIO
         const historialPeriodo = {
           periodoInicio: institucionActual.contrato?.fechaInicio || institucionActual.fechaCreacion,
           periodoFin: institucionActual.contrato?.fechaFin,
@@ -148,14 +157,19 @@ export const useInstituciones = () => {
           consultasConsumidas: institucionActual.contrato?.consumidas,
           consumoPorMes: institucionActual.consumoPorMes || {},
           duracionMeses: institucionActual.contrato?.duracionMeses,
+          montoTotal: institucionActual.montoTotal || 0,
+          plazoMeses: institucionActual.plazoMeses || 1,
           fechaRenovacion: new Date().toISOString(),
-          // ✨ AGREGAR COMENTARIO AL HISTORIAL
           comentario: datosActualizados.comentarioRenovacion || null,
           renovadoPor: auth.currentUser?.email || 'Sistema'
         };
 
         await updateDoc(institucionRef, {
           nombre: datosActualizados.nombre,
+          categoria: datosActualizados.categoria || 'Sin Categoría',
+          seguimientoConsumo: datosActualizados.seguimientoConsumo || null,
+          montoTotal: datosActualizados.montoTotal || 0,
+          plazoMeses: datosActualizados.plazoMeses || 1,
           estado: 'activo',
           'contrato.asignadas': datosActualizados.consultas,
           'contrato.consumidas': 0,
@@ -164,7 +178,6 @@ export const useInstituciones = () => {
           'contrato.fechaFin': calcularFechaVencimiento(datosActualizados.nuevaFechaInicio, datosActualizados.duracion),
           consumoPorMes: {},
           historial: [...(institucionActual.historial || []), historialPeriodo],
-          // ✨ GUARDAR ÚLTIMO COMENTARIO DE RENOVACIÓN
           ultimaRenovacion: {
             fecha: new Date().toISOString(),
             comentario: datosActualizados.comentarioRenovacion || null,
@@ -172,54 +185,52 @@ export const useInstituciones = () => {
           }
         });
 
-        console.log("✅ Institución renovada con comentario:", datosActualizados.comentarioRenovacion);
+        // ✨ REGISTRAR AUDITORÍA
+        await logAuditoria(id, 'Renovación de Contrato', `Se renovó contrato como ${datosActualizados.categoria}.`);
+
       } else {
         const fechaInicioOriginal = institucionActual.contrato?.fechaInicio || new Date().toISOString().split('T')[0];
-        
         await updateDoc(institucionRef, {
           nombre: datosActualizados.nombre,
+          categoria: datosActualizados.categoria || 'Sin Categoría',
+          seguimientoConsumo: datosActualizados.seguimientoConsumo || null,
+          montoTotal: datosActualizados.montoTotal || 0,
+          plazoMeses: datosActualizados.plazoMeses || 1,
           estado: datosActualizados.estado || institucionActual.estado || 'activo',
           'contrato.asignadas': datosActualizados.consultas,
           'contrato.duracionMeses': datosActualizados.duracion,
           'contrato.fechaFin': calcularFechaVencimiento(fechaInicioOriginal, datosActualizados.duracion)
         });
+
+        // ✨ REGISTRAR AUDITORÍA
+        await logAuditoria(id, 'Edición de Institución', `Se actualizaron datos generales.`);
       }
-      
       return { success: true };
     } catch (error) {
-      console.error("Error al editar institución:", error);
       return { success: false, error: error.message };
     }
   };
 
-  // Eliminar institución
   const eliminarInstitucion = async (id) => {
     try {
       await deleteDoc(doc(db, 'instituciones', id));
-      console.log("Institución eliminada exitosamente");
+      // ✨ REGISTRAR AUDITORÍA
+      await logAuditoria(id, 'Eliminación de Institución', `Institución eliminada del sistema.`);
       return { success: true };
     } catch (error) {
-      console.error("Error al eliminar institución:", error);
-      setError(error.message);
       return { success: false, error: error.message };
     }
   };
 
-  // Registrar consumo mensual
   const registrarConsumoMensual = async (id, datosConsumo) => {
     try {
       const institucionRef = doc(db, 'instituciones', id);
-      
       const institucionActual = instituciones.find(inst => inst.id === id);
-      if (!institucionActual) {
-        return { success: false, error: 'Institución no encontrada' };
-      }
-
+      
       const nuevoConsumoMes = { 
         ...institucionActual.consumoPorMes, 
         [datosConsumo.mes]: datosConsumo.consumo 
       };
-      
       const totalConsumido = Object.values(nuevoConsumoMes).reduce((sum, val) => sum + val, 0);
 
       await updateDoc(institucionRef, {
@@ -227,28 +238,21 @@ export const useInstituciones = () => {
         'contrato.consumidas': totalConsumido
       });
 
+      // ✨ REGISTRAR AUDITORÍA
+      await logAuditoria(id, 'Registro de Consumo', `Registrado: ${datosConsumo.consumo} consultas para el mes ${datosConsumo.mes}`);
+
       return { success: true };
     } catch (error) {
-      console.error("Error al registrar consumo:", error);
       return { success: false, error: error.message };
     }
   };
 
-  // Editar consumo mensual específico
   const editarConsumoMensual = async (id, datosConsumo) => {
     try {
       const institucionRef = doc(db, 'instituciones', id);
-      
       const institucionActual = instituciones.find(inst => inst.id === id);
-      if (!institucionActual) {
-        return { success: false, error: 'Institución no encontrada' };
-      }
-
-      const nuevoConsumoMes = { 
-        ...institucionActual.consumoPorMes, 
-        [datosConsumo.mes]: datosConsumo.consumo 
-      };
       
+      const nuevoConsumoMes = { ...institucionActual.consumoPorMes, [datosConsumo.mes]: datosConsumo.consumo };
       const totalConsumido = Object.values(nuevoConsumoMes).reduce((sum, val) => sum + val, 0);
 
       await updateDoc(institucionRef, {
@@ -256,71 +260,48 @@ export const useInstituciones = () => {
         'contrato.consumidas': totalConsumido
       });
 
+      // ✨ REGISTRAR AUDITORÍA
+      await logAuditoria(id, 'Edición de Consumo', `Modificado a: ${datosConsumo.consumo} consultas para el mes ${datosConsumo.mes}`);
+
       return { success: true };
     } catch (error) {
-      console.error("Error al editar consumo mensual:", error);
       return { success: false, error: error.message };
     }
   };
 
-  // Eliminar consumo mensual específico
   const eliminarConsumoMensual = async (id, mesAEliminar) => {
     try {
       const institucionDoc = doc(db, 'instituciones', id);
       const institucionSnapshot = await getDoc(institucionDoc);
       
-      if (!institucionSnapshot.exists()) {
-        return { success: false, error: 'Institución no encontrada' };
-      }
-      
       const datosActuales = institucionSnapshot.data();
       const consumoPorMes = { ...datosActuales.consumoPorMes };
-      const consumoEliminado = consumoPorMes[mesAEliminar] || 0;
-      
-      // Eliminar el mes del objeto
       delete consumoPorMes[mesAEliminar];
       
-      // Recalcular consumo total
       const nuevoConsumoTotal = Object.values(consumoPorMes).reduce((sum, consumo) => sum + consumo, 0);
       
-      // Actualizar en Firebase
       await updateDoc(institucionDoc, {
         consumoPorMes: consumoPorMes,
         'contrato.consumidas': nuevoConsumoTotal
       });
       
-      console.log(`✅ Consumo mensual eliminado: ${mesAEliminar} (${consumoEliminado} consultas)`);
+      // ✨ REGISTRAR AUDITORÍA
+      await logAuditoria(id, 'Eliminación de Consumo', `Se eliminó el registro del mes ${mesAEliminar}`);
+
       return { success: true };
-      
     } catch (error) {
-      console.error('❌ Error al eliminar consumo mensual:', error);
       return { success: false, error: error.message };
     }
   };
 
-  return {
-    instituciones,
-    loading,
-    error,
-    agregarInstitucion,
-    editarInstitucion,
-    eliminarInstitucion,
-    registrarConsumoMensual,
-    editarConsumoMensual,
-    eliminarConsumoMensual
-  };
+  return { instituciones, loading, error, agregarInstitucion, editarInstitucion, eliminarInstitucion, registrarConsumoMensual, editarConsumoMensual, eliminarConsumoMensual };
 };
 
-// Hook para estadísticas del dashboard
+// Hook Estadísticas intacto
 export const useEstadisticas = () => {
   const [estadisticas, setEstadisticas] = useState({
-    totalInstituciones: 0,
-    totalConsultasAsignadas: 0,
-    totalConsultasConsumidas: 0,
-    promedioUso: 0,
-    institucionesActivas: 0
+    totalInstituciones: 0, totalConsultasAsignadas: 0, totalConsultasConsumidas: 0, promedioUso: 0, institucionesActivas: 0
   });
-
   const { instituciones } = useInstituciones();
 
   useEffect(() => {
@@ -330,345 +311,246 @@ export const useEstadisticas = () => {
       const promedio = totalAsignadas > 0 ? (totalConsumidas / totalAsignadas) * 100 : 0;
       const activas = instituciones.filter(inst => inst.activa !== false).length;
 
-      setEstadisticas({
-        totalInstituciones: instituciones.length,
-        totalConsultasAsignadas: totalAsignadas,
-        totalConsultasConsumidas: totalConsumidas,
-        promedioUso: promedio.toFixed(1),
-        institucionesActivas: activas
-      });
+      setEstadisticas({ totalInstituciones: instituciones.length, totalConsultasAsignadas: totalAsignadas, totalConsultasConsumidas: totalConsumidas, promedioUso: promedio.toFixed(1), institucionesActivas: activas });
     } else {
-      setEstadisticas({
-        totalInstituciones: 0,
-        totalConsultasAsignadas: 0,
-        totalConsultasConsumidas: 0,
-        promedioUso: 0,
-        institucionesActivas: 0
-      });
+      setEstadisticas({ totalInstituciones: 0, totalConsultasAsignadas: 0, totalConsultasConsumidas: 0, promedioUso: 0, institucionesActivas: 0 });
     }
   }, [instituciones]);
 
   return estadisticas;
 };
 
-// Hook para usuarios
+// Hook Usuarios actualizado
 export const useUsuarios = () => {
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Cargar usuarios desde Firestore en tiempo real
   useEffect(() => {
     const q = query(collection(db, 'usuarios'), orderBy('fechaCreacion', 'desc'));
-    
     const unsubscribe = onSnapshot(q,
       (querySnapshot) => {
         const usuariosData = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data();
           usuariosData.push({
-            id: doc.id, // ID del documento
-            uid: data.uid || doc.id, // UID de Firebase Auth
+            id: doc.id,
+            uid: data.uid || doc.id,
             ...data,
-            fechaCreacion: data.fechaCreacion?.toDate?.()?.toLocaleDateString('es-ES') || 
-                           (data.fechaCreacion ? new Date(data.fechaCreacion).toLocaleDateString('es-ES') : 'N/A'),
-            ultimoAcceso: data.ultimoAcceso ? 
-                         new Date(data.ultimoAcceso).toLocaleString('es-ES') : 
-                         'Nunca'
+            fechaCreacion: data.fechaCreacion?.toDate?.()?.toLocaleDateString('es-ES') || 'N/A',
+            ultimoAcceso: data.ultimoAcceso ? new Date(data.ultimoAcceso).toLocaleString('es-ES') : 'Nunca'
           });
         });
-        console.log("👥 Usuarios cargados desde Firestore:", usuariosData);
         setUsuarios(usuariosData);
         setLoading(false);
       },
-      (error) => {
-        console.error("❌ Error al cargar usuarios:", error);
-        setError(error.message);
-        setLoading(false);
-      }
+      (error) => { setError(error.message); setLoading(false); }
     );
-
     return () => unsubscribe();
   }, []);
 
-  // Agregar nuevo usuario de forma segura - CORREGIDO
   const agregarUsuario = async (nuevoUsuario) => {
     try {
       setLoading(true);
-      console.log("🔄 Creando usuario:", nuevoUsuario);
-      
-      // 1. Crear usuario en Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(
-        auth, 
-        nuevoUsuario.email, 
-        nuevoUsuario.password
-      );
-      
+      const userCredential = await createUserWithEmailAndPassword(auth, nuevoUsuario.email, nuevoUsuario.password);
       const user = userCredential.user;
-      console.log("✅ Usuario creado en Auth:", user.uid);
       
-      // 2. Actualizar perfil con el nombre
-      await updateProfile(user, {
-        displayName: nuevoUsuario.nombre
-      });
+      await updateProfile(user, { displayName: nuevoUsuario.nombre });
       
-      // 3. Guardar datos adicionales en Firestore con el UID como ID del documento
       const usuarioData = {
         uid: user.uid,
         nombre: nuevoUsuario.nombre,
         email: nuevoUsuario.email,
-        rol: nuevoUsuario.rol,
+        rol: nuevoUsuario.rol, // admin, contabilidad, usuario
+        area: nuevoUsuario.area || '', // Guardamos el Área del Usuario
+        permisos: nuevoUsuario.permisos || null, // ✨ GUARDAMOS LOS PERMISOS AQUI
         fechaCreacion: serverTimestamp(),
         activo: true,
         ultimoAcceso: null,
         creadoPor: auth.currentUser?.uid || 'sistema'
       };
       
-      // IMPORTANTE: Usar el UID como ID del documento
       await setDoc(doc(db, 'usuarios', user.uid), usuarioData);
-      console.log("✅ Usuario guardado en Firestore:", user.uid);
+      
+      // ✨ REGISTRAR AUDITORÍA GLOBAL
+      await logAuditoria(null, 'Creación de Usuario', `Se creó usuario: ${nuevoUsuario.email}`);
       
       return { success: true, uid: user.uid };
-      
     } catch (error) {
-      console.error("❌ Error al crear usuario:", error);
-      
       let errorMessage = 'Error al crear usuario';
-      switch (error.code) {
-        case 'auth/email-already-in-use':
-          errorMessage = 'El email ya está registrado';
-          break;
-        case 'auth/weak-password':
-          errorMessage = 'La contraseña es muy débil (mínimo 6 caracteres)';
-          break;
-        case 'auth/invalid-email':
-          errorMessage = 'Email inválido';
-          break;
-        default:
-          errorMessage = error.message;
-      }
-      
+      if (error.code === 'auth/email-already-in-use') errorMessage = 'El email ya está registrado';
       return { success: false, error: errorMessage };
     } finally {
       setLoading(false);
     }
   };
 
-  // Eliminar usuario de forma segura
   const eliminarUsuario = async (uid, nombre) => {
     try {
-      // Verificar que no sea el usuario actual
-      if (uid === auth.currentUser?.uid) {
-        return { success: false, error: 'No puedes eliminar tu propia cuenta' };
-      }
-      
-      // Eliminar de Firestore
+      if (uid === auth.currentUser?.uid) return { success: false, error: 'No puedes eliminar tu propia cuenta' };
       await deleteDoc(doc(db, 'usuarios', uid));
-      console.log(`✅ Usuario ${nombre} eliminado de Firestore`);
-      
+      // ✨ REGISTRAR AUDITORÍA GLOBAL
+      await logAuditoria(null, 'Eliminación de Usuario', `Se eliminó al usuario: ${nombre}`);
       return { success: true };
-      
     } catch (error) {
-      console.error("❌ Error al eliminar usuario:", error);
       return { success: false, error: error.message };
     }
   };
 
-  // Cambiar estado activo/inactivo
   const toggleUsuarioActivo = async (uid) => {
     try {
-      if (uid === auth.currentUser?.uid) {
-        return { success: false, error: 'No puedes desactivar tu propia cuenta' };
-      }
-
+      if (uid === auth.currentUser?.uid) return { success: false, error: 'No puedes desactivar tu cuenta' };
       const usuario = usuarios.find(u => u.uid === uid);
-      if (!usuario) {
-        return { success: false, error: 'Usuario no encontrado' };
-      }
-
+      
       await updateDoc(doc(db, 'usuarios', uid), {
         activo: !usuario.activo,
         modificadoPor: auth.currentUser?.uid,
         fechaModificacion: serverTimestamp()
       });
-
-      console.log(`✅ Estado del usuario ${usuario.nombre} cambiado`);
       return { success: true };
     } catch (error) {
-      console.error("❌ Error al cambiar estado del usuario:", error);
       return { success: false, error: error.message };
     }
   };
 
-  return {
-    usuarios,
-    loading,
-    error,
-    agregarUsuario,
-    eliminarUsuario,
-    toggleUsuarioActivo
+  const editarUsuario = async (uid, datosActualizados) => {
+    try {
+      setLoading(true);
+      
+      const usuarioRef = doc(db, 'usuarios', uid);
+      await updateDoc(usuarioRef, {
+        nombre: datosActualizados.nombre,
+        rol: datosActualizados.rol,
+        area: datosActualizados.area || '', // Actualizamos el Área del Usuario al Editar
+        permisos: datosActualizados.permisos,
+        fechaModificacion: serverTimestamp(),
+        modificadoPor: auth.currentUser?.uid
+      });
+
+      // Registrar en Auditoría
+      await logAuditoria(null, 'Edición de Usuario', `Se editaron los permisos/rol de: ${datosActualizados.email}`);
+      
+      return { success: true };
+    } catch (error) {
+      console.error("❌ Error al editar usuario:", error);
+      return { success: false, error: error.message };
+    } finally {
+      setLoading(false);
+    }
   };
+
+  return { usuarios, loading, error, agregarUsuario, eliminarUsuario, toggleUsuarioActivo, editarUsuario };
 };
 
-// Hook para manejar comentarios de instituciones
+// Hook Comentarios actualizado con Auditoría
 export const useComentarios = (institucionId) => {
   const [comentarios, setComentarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Cargar comentarios en tiempo real
   useEffect(() => {
-    if (!institucionId) {
-      setLoading(false);
-      return;
-    }
-
-    const q = query(
-      collection(db, 'comentarios'),
-      where('institucionId', '==', institucionId),
-      orderBy('fechaCreacion', 'desc')
-    );
-    
+    if (!institucionId) return;
+    const q = query(collection(db, 'comentarios'), where('institucionId', '==', institucionId), orderBy('fechaCreacion', 'desc'));
     const unsubscribe = onSnapshot(q,
       (querySnapshot) => {
         const comentariosData = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          comentariosData.push({
-            id: doc.id,
-            ...data
-          });
+        querySnapshot.forEach((doc) => { comentariosData.push({ id: doc.id, ...doc.data() }); });
+        
+        // ✨ ORDENAR: Fijados primero
+        comentariosData.sort((a, b) => {
+           if (a.fijado && !b.fijado) return -1;
+           if (!a.fijado && b.fijado) return 1;
+           return 0;
         });
-        console.log(`💬 Comentarios cargados para institución ${institucionId}:`, comentariosData.length);
+
         setComentarios(comentariosData);
         setLoading(false);
       },
-      (error) => {
-        console.error("❌ Error al cargar comentarios:", error);
-        setError(error.message);
-        setLoading(false);
-      }
+      (error) => { setError(error.message); setLoading(false); }
     );
-
     return () => unsubscribe();
   }, [institucionId]);
 
-  // Agregar nuevo comentario
   const agregarComentario = async (nuevoComentario) => {
     try {
-      if (!auth.currentUser) {
-        return { success: false, error: 'Usuario no autenticado' };
+      let area = 'Sin Dato área';
+      let nombre = auth.currentUser.displayName || auth.currentUser.email;
+      if (auth.currentUser?.uid) {
+        const userDocRef = doc(db, 'usuarios', auth.currentUser.uid);
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          if (userSnap.data().area) area = userSnap.data().area;
+          if (userSnap.data().nombre) nombre = userSnap.data().nombre;
+        }
       }
 
-      const comentarioCompleto = {
+      const docRef = await addDoc(collection(db, 'comentarios'), {
         texto: nuevoComentario.texto,
         institucionId: nuevoComentario.institucionId,
-        autorNombre: auth.currentUser.displayName || auth.currentUser.email,
+        etiqueta: area, // Guardamos el Area en vez de la etiqueta estatica antigua para compatibilidad retroactiva o en un nuevo campo
+        autorArea: area, 
+        fijado: false,
+        autorNombre: nombre,
         autorEmail: auth.currentUser.email,
         autorUid: auth.currentUser.uid,
         fechaCreacion: serverTimestamp(),
         activo: true
-      };
+      });
 
-      const docRef = await addDoc(collection(db, 'comentarios'), comentarioCompleto);
-      console.log("💬 Comentario agregado con ID:", docRef.id);
+      // ✨ REGISTRAR AUDITORÍA
+      await logAuditoria(nuevoComentario.institucionId, 'Nuevo Comentario', `Comentario agregado por ${auth.currentUser.email}`);
+
       return { success: true, id: docRef.id };
-      
     } catch (error) {
-      console.error("❌ Error al agregar comentario:", error);
       return { success: false, error: error.message };
     }
   };
 
-  // Editar comentario existente
   const editarComentario = async (comentarioId, nuevoTexto) => {
     try {
-      if (!auth.currentUser) {
-        return { success: false, error: 'Usuario no autenticado' };
-      }
-
-      // Verificar que el usuario actual sea el autor del comentario
-      const comentario = comentarios.find(c => c.id === comentarioId);
-      if (!comentario) {
-        return { success: false, error: 'Comentario no encontrado' };
-      }
-
-      if (comentario.autorUid !== auth.currentUser.uid) {
-        return { success: false, error: 'Solo puedes editar tus propios comentarios' };
-      }
-
       const comentarioRef = doc(db, 'comentarios', comentarioId);
       await updateDoc(comentarioRef, {
         texto: nuevoTexto,
         fechaModificacion: serverTimestamp(),
         modificadoPor: auth.currentUser.uid
       });
-
-      console.log("✅ Comentario editado exitosamente");
       return { success: true };
-      
     } catch (error) {
-      console.error("❌ Error al editar comentario:", error);
       return { success: false, error: error.message };
     }
   };
 
-  // Eliminar comentario
   const eliminarComentario = async (comentarioId) => {
     try {
-      if (!auth.currentUser) {
-        return { success: false, error: 'Usuario no autenticado' };
-      }
-
-      // Verificar que el usuario actual sea el autor del comentario
-      const comentario = comentarios.find(c => c.id === comentarioId);
-      if (!comentario) {
-        return { success: false, error: 'Comentario no encontrado' };
-      }
-
-      if (comentario.autorUid !== auth.currentUser.uid) {
-        return { success: false, error: 'Solo puedes eliminar tus propios comentarios' };
-      }
-
       await deleteDoc(doc(db, 'comentarios', comentarioId));
-      console.log("🗑️ Comentario eliminado exitosamente");
       return { success: true };
-      
     } catch (error) {
-      console.error("❌ Error al eliminar comentario:", error);
       return { success: false, error: error.message };
     }
   };
 
-  return {
-    comentarios,
-    loading,
-    error,
-    agregarComentario,
-    editarComentario,
-    eliminarComentario
+  const toggleFijarComentario = async (comentarioId, estadoActual) => {
+    try {
+      const comentarioRef = doc(db, 'comentarios', comentarioId);
+      await updateDoc(comentarioRef, {
+        fijado: !estadoActual
+      });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   };
+
+  return { comentarios, loading, error, agregarComentario, editarComentario, eliminarComentario, toggleFijarComentario };
 };
 
-// Hook para obtener contador de comentarios por institución
 export const useContadorComentarios = (institucionId) => {
   const [count, setCount] = useState(0);
-
   useEffect(() => {
     if (!institucionId) return;
-
-    const q = query(
-      collection(db, 'comentarios'),
-      where('institucionId', '==', institucionId),
-      where('activo', '==', true)
-    );
-    
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      setCount(querySnapshot.size);
-    });
-
+    const q = query(collection(db, 'comentarios'), where('institucionId', '==', institucionId), where('activo', '==', true));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => { setCount(querySnapshot.size); });
     return () => unsubscribe();
   }, [institucionId]);
-
   return count;
 };
