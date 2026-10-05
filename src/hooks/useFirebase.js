@@ -99,6 +99,7 @@ export const useInstituciones = () => {
         nombre: nuevaInstitucion.nombre,
         categoria: nuevaInstitucion.categoria || 'Sin Categoría',
         seguimientoConsumo: nuevaInstitucion.seguimientoConsumo || null,
+        moneda: nuevaInstitucion.moneda || 'PYG',
         montoTotal: nuevaInstitucion.montoTotal || 0, // ✨ NUEVO
         plazoMeses: nuevaInstitucion.plazoMeses || 1, // ✨ NUEVO
         estado: 'activo',
@@ -122,6 +123,7 @@ export const useInstituciones = () => {
         institucionId: docRef.id,
         institucionNombre: nuevaInstitucion.nombre,
         categoria: nuevaInstitucion.categoria || 'Sin Categoría',
+        moneda: nuevaInstitucion.moneda || 'PYG',
         montoTotal: nuevaInstitucion.montoTotal || 0,
         plazoMeses: nuevaInstitucion.plazoMeses || 1,
         estadoGeneral: 'incompleta', // Estado que indica que falta RUC y Nro Factura
@@ -158,6 +160,7 @@ export const useInstituciones = () => {
           consumoPorMes: institucionActual.consumoPorMes || {},
           duracionMeses: institucionActual.contrato?.duracionMeses,
           montoTotal: institucionActual.montoTotal || 0,
+          moneda: institucionActual.moneda || 'PYG',
           plazoMeses: institucionActual.plazoMeses || 1,
           fechaRenovacion: new Date().toISOString(),
           comentario: datosActualizados.comentarioRenovacion || null,
@@ -168,6 +171,7 @@ export const useInstituciones = () => {
           nombre: datosActualizados.nombre,
           categoria: datosActualizados.categoria || 'Sin Categoría',
           seguimientoConsumo: datosActualizados.seguimientoConsumo || null,
+          moneda: datosActualizados.moneda || 'PYG',
           montoTotal: datosActualizados.montoTotal || 0,
           plazoMeses: datosActualizados.plazoMeses || 1,
           estado: 'activo',
@@ -194,6 +198,7 @@ export const useInstituciones = () => {
           nombre: datosActualizados.nombre,
           categoria: datosActualizados.categoria || 'Sin Categoría',
           seguimientoConsumo: datosActualizados.seguimientoConsumo || null,
+          moneda: datosActualizados.moneda || 'PYG',
           montoTotal: datosActualizados.montoTotal || 0,
           plazoMeses: datosActualizados.plazoMeses || 1,
           estado: datosActualizados.estado || institucionActual.estado || 'activo',

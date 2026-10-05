@@ -11,6 +11,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { logAuditoria } from '../hooks/useFirebase';
 import { descargarLibro, formatearFechaHora, hojaDesdeObjetos } from '../utils/excel';
+import { monedaDe, formatearMonto } from '../utils/moneda';
 
 export const ModalAuditoria = ({ institucionId, institucionNombre, onClose }) => {
   const [logs, setLogs] = useState([]);
@@ -694,7 +695,7 @@ const Facturacion = () => {
                   <div key={inst.id} className="bg-white p-3 rounded-lg shadow-sm border border-orange-200 flex justify-between items-center hover:border-orange-400 transition-colors">
                     <div className="truncate pr-2">
                       <p className="font-bold text-gray-800 text-sm truncate">{inst.nombre}</p>
-                      <p className="text-xs text-gray-500 font-medium mt-0.5">Monto: {(inst.montoTotal || 0).toLocaleString()} Gs | {inst.plazoMeses || 1} Mes(es)</p>
+                      <p className="text-xs text-gray-500 font-medium mt-0.5">Monto: {formatearMonto(inst.montoTotal, monedaDe(inst))} {monedaDe(inst)} | {inst.plazoMeses || 1} Mes(es)</p>
                     </div>
                     <button 
                       onClick={() => {

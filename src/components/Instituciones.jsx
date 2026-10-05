@@ -46,7 +46,26 @@ import { useContadorComentarios } from '../hooks/useFirebase';
 import { MessageCircle } from 'lucide-react';
 import { descargarLibro, etiquetaEstado, formatearFecha, formatearFechaHora, hojaDesdeObjetos } from '../utils/excel';
 import { describirVigencia, parsearFecha } from '../utils/contratos';
+import { MONEDAS, monedaDe, limpiarMonto, formatearMontoInput, formatearMonto } from '../utils/moneda';
 import { ResponsiveContainer, AreaChart, Area, Tooltip, XAxis } from 'recharts';
+
+// Campo de monto con puntos de miles automáticos (3200000 -> 3.200.000) y etiqueta de moneda
+const CampoMonto = ({ value, moneda, onChange, className, placeholder, disabled }) => (
+  <div className="relative">
+    <input
+      type="text"
+      inputMode={moneda === 'USD' ? 'decimal' : 'numeric'}
+      value={formatearMontoInput(value, moneda)}
+      onChange={(e) => onChange(limpiarMonto(e.target.value, moneda))}
+      className={`${className} pr-16`}
+      placeholder={placeholder}
+      disabled={disabled}
+    />
+    {moneda && (
+      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-extrabold text-slate-400 pointer-events-none">{moneda}</span>
+    )}
+  </div>
+);
 
 const ModalAgregarInstitucion = ({ onClose, onSave }) => {
   const [nombre, setNombre] = useState('');
@@ -57,6 +76,7 @@ const ModalAgregarInstitucion = ({ onClose, onSave }) => {
   const [fechaInicio, setFechaInicio] = useState('');
   const [saving, setSaving] = useState(false);
   const [montoTotal, setMontoTotal] = useState('');
+  const [moneda, setMoneda] = useState('');
   const [plazoMeses, setPlazoMeses] = useState('1');
 
   const obtenerFechaHoy = () => {
@@ -68,9 +88,15 @@ const ModalAgregarInstitucion = ({ onClose, onSave }) => {
     setFechaInicio(obtenerFechaHoy());
   };
 
+  const cambiarMoneda = (nueva) => {
+    setMoneda(nueva);
+    if (nueva !== 'USD') setMontoTotal((prev) => String(prev).split('.')[0]);
+  };
+
   const handleSubmit = async () => {
     if (!nombre.trim()) return sileo.warning({ title: 'Campo requerido', description: 'Falta completar el Nombre de la Institución.' });
     if (esPlanPremium(categoria) && !seguimientoConsumo) return sileo.warning({ title: 'Campo requerido', description: 'Falta indicar si se deja de dar seguimiento al consumo.' });
+    if (!moneda) return sileo.warning({ title: 'Campo requerido', description: 'Falta seleccionar la Moneda (PYG o USD).' });
     if (montoTotal === '' || parseFloat(montoTotal) < 0) return sileo.warning({ title: 'Campo requerido', description: 'Falta completar el Monto Total (puede ser 0 pero no vacío).' });
     if (!consultas || parseInt(consultas) <= 0) return sileo.warning({ title: 'Campo requerido', description: 'Falta completar la Cantidad de Consultas Asignadas (mayor a 0).' });
     if (!duracion || parseInt(duracion) <= 0) return sileo.warning({ title: 'Campo requerido', description: 'Falta seleccionar la Duración del Contrato.' });
@@ -80,6 +106,7 @@ const ModalAgregarInstitucion = ({ onClose, onSave }) => {
     const resultado = await onSave({ 
       nombre: nombre.trim(), 
       categoria,
+      moneda,
       seguimientoConsumo: esPlanPremium(categoria) ? seguimientoConsumo : null,
       consultas: parseInt(consultas), 
       duracion: parseInt(duracion),
@@ -93,6 +120,7 @@ const ModalAgregarInstitucion = ({ onClose, onSave }) => {
       setCategoria('BUSINESS Micro');
       setSeguimientoConsumo('');
       setMontoTotal('');
+      setMoneda('');
       setPlazoMeses('1');
       setConsultas('');
       setDuracion(6);
@@ -170,8 +198,17 @@ const ModalAgregarInstitucion = ({ onClose, onSave }) => {
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelCls}>Monto Total (Gs)</label>
-                <input type="number" value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} className={inputCls} placeholder="Ej: 1500000" disabled={saving} />
+                <label className={labelCls}>Moneda</label>
+                <select value={moneda} onChange={(e) => cambiarMoneda(e.target.value)} className={inputCls} disabled={saving}>
+                  <option value="">--Seleccionar--</option>
+                  {MONEDAS.map(m => (
+                    <option key={m.valor} value={m.valor}>{m.etiqueta}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Monto Total</label>
+                <CampoMonto value={montoTotal} moneda={moneda} onChange={setMontoTotal} className={inputCls} placeholder={moneda === 'USD' ? 'Ej: 1.500,50' : 'Ej: 3.200.000'} disabled={saving} />
               </div>
               <div>
                 <label className={labelCls}>Plazo de Pago</label>
@@ -193,7 +230,7 @@ const ModalAgregarInstitucion = ({ onClose, onSave }) => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelCls}>Consultas Asignadas</label>
-                <input type="number" value={consultas} onChange={(e) => setConsultas(e.target.value)} className={inputCls} placeholder="Ej: 120000" min="1" disabled={saving} />
+                <input type="number" value={consultas} onChange={(e) => setConsultas(e.target.value)} className={inputCls} placeholder="Ej: 206" min="1" disabled={saving} />
               </div>
               <div>
                 <label className={labelCls}>Duración (meses)</label>
@@ -251,7 +288,8 @@ const ModalEditarInstitucion = ({ institucion, onClose, onSave }) => {
   const [nombre, setNombre] = useState(institucion.nombre);
   const [categoria, setCategoria] = useState(institucion.categoria || 'Sin Categoría'); // ✨ ESTADO CATEGORIA
   const [seguimientoConsumo, setSeguimientoConsumo] = useState(institucion.seguimientoConsumo || '');
-  const [montoTotal, setMontoTotal] = useState(institucion.montoTotal || ''); // ✨ NUEVO
+  const [montoTotal, setMontoTotal] = useState(String(institucion.montoTotal || ''));
+  const [moneda, setMoneda] = useState(monedaDe(institucion));
   const [plazoMeses, setPlazoMeses] = useState(institucion.plazoMeses || '1'); // ✨ NUEVO
   const [consultas, setConsultas] = useState(institucion.contrato.asignadas);
   const [duracion, setDuracion] = useState(institucion.contrato.duracionMeses);
@@ -263,6 +301,11 @@ const ModalEditarInstitucion = ({ institucion, onClose, onSave }) => {
   const obtenerFechaHoy = () => {
     const hoy = new Date();
     return hoy.toISOString().split('T')[0];
+  };
+
+  const cambiarMoneda = (nueva) => {
+    setMoneda(nueva);
+    if (nueva !== 'USD') setMontoTotal((prev) => String(prev).split('.')[0]);
   };
 
   const validarFecha = (fecha) => {
@@ -293,6 +336,7 @@ const ModalEditarInstitucion = ({ institucion, onClose, onSave }) => {
           const datosActualizados = { 
             nombre: nombre.trim(), 
             categoria,
+            moneda,
             seguimientoConsumo: esPlanPremium(categoria) ? seguimientoConsumo : null,
             consultas: parseInt(consultas), 
             duracion: parseInt(duracion),
@@ -419,8 +463,16 @@ const ModalEditarInstitucion = ({ institucion, onClose, onSave }) => {
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelCls}>Monto Total (Gs)</label>
-                <input type="number" value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} className={inputCls} placeholder="Ej: 1500000" disabled={saving} />
+                <label className={labelCls}>Moneda</label>
+                <select value={moneda} onChange={(e) => cambiarMoneda(e.target.value)} className={inputCls} disabled={saving}>
+                  {MONEDAS.map(m => (
+                    <option key={m.valor} value={m.valor}>{m.etiqueta}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Monto Total</label>
+                <CampoMonto value={montoTotal} moneda={moneda} onChange={setMontoTotal} className={inputCls} placeholder={moneda === 'USD' ? 'Ej: 1.500,50' : 'Ej: 3.200.000'} disabled={saving} />
               </div>
               <div>
                 <label className={labelCls}>Plazo de Pago</label>
@@ -987,6 +1039,13 @@ const ModalEditarConsumoMes = ({ institucion, mesSeleccionado, onClose, onSave }
 const ModalHistorial = ({ institucion, onClose }) => {
   const historial = institucion.historial || [];
 
+  // Totales separados por moneda: nunca se suman PYG con USD
+  const totalesPorMoneda = {};
+  [
+    { monto: institucion.montoTotal || 0, moneda: monedaDe(institucion) },
+    ...historial.map(p => ({ monto: p.montoTotal || institucion.montoTotal || 0, moneda: monedaDe(p) }))
+  ].forEach(({ monto, moneda }) => { totalesPorMoneda[moneda] = (totalesPorMoneda[moneda] || 0) + monto; });
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
@@ -1020,7 +1079,7 @@ const ModalHistorial = ({ institucion, onClose }) => {
                 <p className="text-emerald-700 text-sm mt-1">Valor histórico total invertido por este cliente sumando todos sus períodos documentados.</p>
               </div>
               <div className="text-3xl font-black text-emerald-700 tracking-tight text-right drop-shadow-sm">
-                {((institucion.montoTotal || 0) + historial.reduce((sum, p) => sum + (p.montoTotal || institucion.montoTotal || 0), 0)).toLocaleString()} Gs
+                {Object.entries(totalesPorMoneda).map(([m, v]) => `${formatearMonto(v, m)} ${m}`).join(' + ')}
               </div>
             </div>
 
@@ -1654,7 +1713,8 @@ const Instituciones = () => {
       'Institución': inst.nombre,
       'Plan / Categoría': inst.categoria || 'Sin Categoría',
       'Seguimiento de Vencimiento': tieneSeguimientoVencimiento(inst) ? 'Sí' : 'No',
-      'Monto Total (Gs)': inst.montoTotal || 0,
+      'Moneda': monedaDe(inst),
+      'Monto Total': inst.montoTotal || 0,
       'Plazo Meses': inst.plazoMeses || 1,
       'Estado': inst.estado === 'no_renovada' ? 'FINALIZADA' : etiquetaEstado(inst.estado).toUpperCase(),
       'Asignadas': inst.contrato?.asignadas || 0,
@@ -1842,9 +1902,9 @@ const Instituciones = () => {
       {/* BARRA DE FILTROS */}
       <div className="relative z-10 mb-6 bg-white/80 backdrop-blur border border-slate-200 rounded-2xl p-3 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
-          <div className="relative flex-1 min-w-0">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input type="text" placeholder="Buscar institución..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-9 py-2.5 border border-slate-200 rounded-xl bg-white text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm transition-all" />
+          <div className="relative w-full lg:w-80 lg:flex-none lg:mr-auto">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-brand-500" size={18} />
+            <input type="text" placeholder="Buscar institución por nombre..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-9 py-2.5 border-2 border-brand-200 rounded-xl bg-white text-slate-800 placeholder-slate-500 font-medium outline-none shadow-sm focus:ring-4 focus:ring-brand-500/15 focus:border-brand-500 text-sm transition-all" />
             {searchTerm && (
               <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={16} /></button>
             )}
