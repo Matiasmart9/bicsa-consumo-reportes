@@ -21,7 +21,8 @@ service cloud.firestore {
     function activo() {
       return iniciada()
         && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
-        && perfil().get('activo', false) == true;
+        // Algunos usuarios antiguos tienen 'activo' guardado como texto ("true"), igual que acepta el login
+        && perfil().get('activo', false) in [true, 'true'];
     }
 
     function rol() {
@@ -43,12 +44,12 @@ service cloud.firestore {
     }
 
     function permiso(nombre, clave) {
-      return activo() && modulo(nombre).get(clave, false) == true;
+      return activo() && modulo(nombre).get(clave, false) in [true, 'true'];
     }
 
-    // Contabilidad con nivel "full" (puede crear y editar facturas)
+    // Contabilidad con nivel "full" (puede crear y editar facturas); igual que la pantalla de Facturación
     function contabilidadCompleta() {
-      return permiso('contabilidad', 'acceso') && modulo('contabilidad').get('nivel', '') == 'full';
+      return activo() && modulo('contabilidad').get('nivel', '') == 'full';
     }
 
     // Auditoría: administrador, permiso explícito, o Contabilidad anterior a este permiso
@@ -91,14 +92,16 @@ service cloud.firestore {
         // Registrar, editar o eliminar consumo mensual
         || (permiso('instituciones', 'registrarConsumo') && camposModificados().hasOnly(['consumoPorMes', 'contrato']))
         // Facturación sincroniza monto, plazo y moneda
-        || (permiso('contabilidad', 'acceso') && camposModificados().hasOnly(['montoTotal', 'plazoMeses', 'moneda']));
+        || (contabilidadCompleta() && camposModificados().hasOnly(['montoTotal', 'plazoMeses', 'moneda']));
     }
 
     // ---------- Facturas ----------
     match /facturas/{id} {
       allow read: if esAdmin()
         || permiso('contabilidad', 'acceso')
-        || permiso('contabilidad', 'dashboardFacturacion');
+        || permiso('contabilidad', 'dashboardFacturacion')
+        // Los usuarios con rol Contabilidad entran directo a Facturación, tengan o no permisos guardados
+        || (activo() && rol() == 'contabilidad');
 
       allow create: if esAdmin()
         || contabilidadCompleta()
@@ -113,7 +116,9 @@ service cloud.firestore {
       allow read: if activo();
       allow create: if esAdmin()
         || (permiso('instituciones', 'comentar') && request.resource.data.autorUid == request.auth.uid);
-      allow update: if esAdmin() || permiso('instituciones', 'comentar');
+      // Igual que las reglas actuales: solo el autor edita su comentario (el administrador también)
+      allow update: if esAdmin()
+        || (permiso('instituciones', 'comentar') && resource.data.autorUid == request.auth.uid);
       allow delete: if esAdmin()
         || (permiso('instituciones', 'comentar') && resource.data.autorUid == request.auth.uid);
     }
