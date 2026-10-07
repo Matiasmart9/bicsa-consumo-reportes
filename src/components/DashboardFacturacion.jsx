@@ -4,6 +4,7 @@ import { PieChart, Calculator, AlertCircle, Clock, CheckCircle, FileSpreadsheet,
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { descargarLibro, hojaDesdeObjetos } from '../utils/excel';
+import { monedaDe, montoConMoneda, sumarPorMoneda, textoTotales } from '../utils/moneda';
 
 const DashboardFacturacion = () => {
   const [facturas, setFacturas] = useState([]);
@@ -81,9 +82,10 @@ const DashboardFacturacion = () => {
         'Categoría': f.categoria || 'Sin Categoría',
         'Nro Factura': f.nroFactura,
         'Estado Financiero': estado.texto,
-        'Monto Total (Gs)': f.montoTotal,
-        'Cobrado (Gs)': cobrado,
-        'Saldo Pendiente (Gs)': pendiente,
+        'Moneda': monedaDe(f),
+        'Monto Total': f.montoTotal,
+        'Cobrado': cobrado,
+        'Saldo Pendiente': pendiente,
         'Plazo (Meses)': f.plazoMeses
       };
     });
@@ -93,16 +95,21 @@ const DashboardFacturacion = () => {
     );
   };
 
-  const totalCobrar = datosFiltrados.reduce((sum, f) => sum + (f.cuotas?.filter(c => c.estado === 'pendiente').reduce((s,c) => s + c.monto, 0) || 0), 0);
-  const totalVencido = datosFiltrados.reduce((sum, f) => {
-    if(getEstadoFinanciero(f).valor === 'vencidos') {
-      return sum + (f.cuotas?.filter(c => {
-         const v = new Date(c.fechaVencimiento); v.setMinutes(v.getMinutes() + v.getTimezoneOffset());
-         return c.estado === 'pendiente' && v < new Date();
-      }).reduce((s,c) => s + c.monto, 0) || 0);
-    }
-    return sum;
-  }, 0);
+  // Los totales se calculan por moneda: nunca se suman PYG con USD
+  const totalCobrar = sumarPorMoneda(datosFiltrados.map(f => ({
+    monto: f.cuotas?.filter(c => c.estado === 'pendiente').reduce((s, c) => s + c.monto, 0) || 0,
+    moneda: monedaDe(f)
+  })));
+  const totalVencido = sumarPorMoneda(datosFiltrados.map(f => {
+    if (getEstadoFinanciero(f).valor !== 'vencidos') return { monto: 0, moneda: monedaDe(f) };
+    return {
+      monto: f.cuotas?.filter(c => {
+        const v = new Date(c.fechaVencimiento); v.setMinutes(v.getMinutes() + v.getTimezoneOffset());
+        return c.estado === 'pendiente' && v < new Date();
+      }).reduce((s, c) => s + c.monto, 0) || 0,
+      moneda: monedaDe(f)
+    };
+  }));
 
   if (loading) {
     return (
@@ -138,14 +145,14 @@ const DashboardFacturacion = () => {
         <div className="bg-white p-6 rounded-xl border border-slate-200/80 border-l-4 border-amber-500 flex items-center justify-between shadow-md">
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Pendiente (Proyectado)</p>
-            <p className="text-3xl font-black text-amber-600">{totalCobrar.toLocaleString()} Gs</p>
+            <p className="text-3xl font-black text-amber-600">{textoTotales(totalCobrar)}</p>
           </div>
           <DollarSign size={40} className="text-amber-200" />
         </div>
         <div className="bg-white p-6 rounded-xl border border-slate-200/80 border-l-4 border-red-500 flex items-center justify-between shadow-md">
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Monto Vencido (Atrasado)</p>
-            <p className="text-3xl font-black text-red-600">{totalVencido.toLocaleString()} Gs</p>
+            <p className="text-3xl font-black text-red-600">{textoTotales(totalVencido)}</p>
           </div>
           <AlertCircle size={40} className="text-red-200" />
         </div>
@@ -217,7 +224,7 @@ const DashboardFacturacion = () => {
                       {estado.texto}
                     </span>
                   </td>
-                  <td className="p-4 text-right font-black text-slate-850">{pendiente.toLocaleString()} Gs</td>
+                  <td className="p-4 text-right font-black text-slate-850">{montoConMoneda(pendiente, monedaDe(f))}</td>
                   <td className="p-4 text-center">
                     <div className="w-full max-w-[120px] mx-auto bg-slate-200 rounded-full h-2 mb-1 overflow-hidden border border-slate-300/30 shadow-inner">
                       <div className="bg-emerald-500 h-full rounded-full shadow-sm shadow-emerald-500/20" style={{width: `${(pagadas/f.plazoMeses)*100}%`}}></div>

@@ -2,7 +2,7 @@
 // Cierra la sesión tras un tiempo sin actividad y avisa antes de hacerlo.
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export const LIMITE_INACTIVIDAD_MS = 15 * 60 * 1000; // 15 minutos
+export const LIMITE_INACTIVIDAD_MS = 30 * 60 * 1000; // 30 minutos
 export const AVISO_INACTIVIDAD_MS = 60 * 1000;       // aviso 1 minuto antes
 
 export const CLAVE_ULTIMA_ACTIVIDAD = 'mipyme_ultima_actividad';

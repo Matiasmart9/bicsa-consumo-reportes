@@ -1,9 +1,11 @@
 // src/components/Navbar.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { LogOut, LayoutDashboard, Building2, ShieldCheck, User, Shield, Calculator, Menu, X, PieChart, UploadCloud, ShieldAlert } from 'lucide-react';
+import { LogOut, LayoutDashboard, Building2, ShieldCheck, User, Shield, Calculator, Menu, X, PieChart, UploadCloud, ShieldAlert, ClipboardList } from 'lucide-react';
 import WeatherWidget from './WeatherWidget'; 
 import { APP_NOMBRE, APP_VERSION } from '../version';
+import CampanaNotificaciones from './CampanaNotificaciones';
+import { puedeVerAuditoria, puedeVerMonitoreo } from '../utils/permisos';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // ✨ NUEVO
@@ -72,6 +74,8 @@ const Navbar = ({ userName, userRole, onLogout }) => {
 
             {/* DERECHA: INFO USUARIO Y SALIR */}
             <div className="flex items-center justify-end space-x-4 w-[40%] md:w-[25%]">
+              <CampanaNotificaciones rol={userRole} permisos={permisos} />
+
               <div className="flex flex-col items-end">
                 <span className="text-xs font-bold text-white flex items-center">
                   <User className="w-3.5 h-3.5 mr-1.5 opacity-80" />              
@@ -152,7 +156,7 @@ const Navbar = ({ userName, userRole, onLogout }) => {
                   <Building2 className="mr-3 text-slate-500" size={18}/> Instituciones
                 </button>
 
-                {(userRole === 'admin' || permisos?.monitoreoContratos?.acceso !== false) && (
+                {puedeVerMonitoreo(userRole, permisos) && (
                 <button 
                   onClick={() => handleNavigation('/monitoreo-contratos')} 
                   className={`w-full flex items-center px-4 py-3 rounded-xl font-bold text-sm transition-all duration-200 shadow-sm ${currentPath.includes('/monitoreo-contratos') ? 'bg-brand-50 text-[#ff5105] border-l-4 border-[#ff5105]' : 'bg-white text-slate-600 border-l-4 border-transparent hover:bg-slate-100 hover:text-slate-800'}`}
@@ -167,6 +171,15 @@ const Navbar = ({ userName, userRole, onLogout }) => {
                 >
                   <UploadCloud className="mr-3 text-slate-500" size={18}/> Cargas XML
                 </button>
+
+                {puedeVerAuditoria(userRole, permisos) && (
+                  <button
+                    onClick={() => handleNavigation('/auditoria')}
+                    className={`w-full flex items-center px-4 py-3 rounded-xl font-bold text-sm transition-all duration-200 shadow-sm ${currentPath.includes('/auditoria') ? 'bg-brand-50 text-[#ff5105] border-l-4 border-[#ff5105]' : 'bg-white text-slate-600 border-l-4 border-transparent hover:bg-slate-100 hover:text-slate-800'}`}
+                  >
+                    <ClipboardList className="mr-3 text-slate-500" size={18}/> Auditoría
+                  </button>
+                )}
 
                 <div className="my-4 border-t border-slate-200"></div>
 

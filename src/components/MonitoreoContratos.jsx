@@ -79,7 +79,7 @@ const TarjetaResumen = ({ icono: Icono, etiqueta, valor, color, activa, onClick 
         <Icono size={18} />
       </span>
     </div>
-    <p className="mt-2 text-3xl font-extrabold text-slate-800">{valor}</p>
+    <p className="mt-3 text-4xl font-extrabold text-slate-800 text-center">{valor}</p>
   </button>
 );
 

@@ -20,7 +20,8 @@ const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
   const [permisos, setPermisos] = useState({
     instituciones: { ver: true, agregar: false, editar: false, eliminar: false, registrarConsumo: false, comentar: false, verHistorial: false },
     contabilidad: { acceso: false, nivel: 'ninguno', dashboardFacturacion: false },
-    monitoreoContratos: { acceso: true }
+    monitoreoContratos: { acceso: true },
+    auditoria: { acceso: false }
   });
 
   const [saving, setSaving] = useState(false);
@@ -37,6 +38,10 @@ const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
           ...usuarioAEditar.permisos,
           monitoreoContratos: {
             acceso: usuarioAEditar.permisos.monitoreoContratos?.acceso !== false
+          },
+          auditoria: {
+            // Contabilidad conservaba el acceso antes de existir este permiso
+            acceso: usuarioAEditar.permisos.auditoria?.acceso ?? usuarioAEditar.rol === 'contabilidad'
           },
           contabilidad: {
             ...usuarioAEditar.permisos.contabilidad,
@@ -56,19 +61,22 @@ const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
       setPermisos({
         instituciones: { ver: true, agregar: true, editar: true, eliminar: true, registrarConsumo: true, comentar: true, verHistorial: true },
         contabilidad: { acceso: true, nivel: 'full', dashboardFacturacion: true },
-        monitoreoContratos: { acceso: true }
+        monitoreoContratos: { acceso: true },
+        auditoria: { acceso: true }
       });
     } else if (nuevoPerfil === 'usuario') {
       setPermisos({
         instituciones: { ver: true, agregar: false, editar: false, eliminar: false, registrarConsumo: false, comentar: false, verHistorial: false },
         contabilidad: { acceso: false, nivel: 'ninguno', dashboardFacturacion: false },
-        monitoreoContratos: { acceso: true }
+        monitoreoContratos: { acceso: true },
+        auditoria: { acceso: false }
       });
     } else if (nuevoPerfil === 'contabilidad') {
       setPermisos({
         instituciones: { ver: true, agregar: false, editar: false, eliminar: false, registrarConsumo: false, comentar: false, verHistorial: false },
         contabilidad: { acceso: true, nivel: 'vista', dashboardFacturacion: true },
-        monitoreoContratos: { acceso: false }
+        monitoreoContratos: { acceso: false },
+        auditoria: { acceso: true }
       });
     }
   };
@@ -239,8 +247,9 @@ const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
               </div>
 
               <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 md:col-span-2">
-                <h4 className="font-bold text-gray-800 border-b pb-2 mb-3 flex items-center"><ShieldAlert size={18} className="mr-2 text-brand-500"/> Módulo Monitoreo Contratos</h4>
+                <h4 className="font-bold text-gray-800 border-b pb-2 mb-3 flex items-center"><ShieldAlert size={18} className="mr-2 text-brand-500"/> Otros módulos</h4>
                 <ToggleSwitch label="Acceso a Monitoreo Contratos" disabled={tipoPerfil === 'admin'} isChecked={permisos.monitoreoContratos?.acceso !== false} onChange={(v) => handlePermisoChange('monitoreoContratos', 'acceso', v)} />
+                <ToggleSwitch label="Acceso a Auditoría" disabled={tipoPerfil === 'admin'} isChecked={permisos.auditoria?.acceso === true} onChange={(v) => handlePermisoChange('auditoria', 'acceso', v)} />
               </div>
             </div>
           </div>

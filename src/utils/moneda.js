@@ -41,3 +41,27 @@ export const formatearMonto = (valor, moneda = 'PYG') => {
     maximumFractionDigits: decimales
   });
 };
+
+// Cuota = total / plazo, redondeada según la moneda (PYG entero, USD con centavos).
+export const redondearCuota = (valor, moneda = 'PYG') =>
+  moneda === 'USD' ? Math.round(valor * 100) / 100 : Math.round(valor);
+
+// "3.200.000 PYG"
+export const montoConMoneda = (valor, moneda = 'PYG') => `${formatearMonto(valor, moneda)} ${moneda}`;
+
+// Suma montos agrupados por moneda: [{ monto, moneda }] -> { PYG: n, USD: n }
+export const sumarPorMoneda = (items) => {
+  const totales = {};
+  items.forEach(({ monto, moneda }) => {
+    const m = moneda || 'PYG';
+    totales[m] = (totales[m] || 0) + (Number(monto) || 0);
+  });
+  return totales;
+};
+
+// { PYG: 100, USD: 5 } -> "100 PYG + 5,00 USD" (0 PYG si no hay nada)
+export const textoTotales = (totales) => {
+  const entradas = Object.entries(totales);
+  if (entradas.length === 0) return montoConMoneda(0, 'PYG');
+  return entradas.map(([m, v]) => montoConMoneda(v, m)).join(' + ');
+};

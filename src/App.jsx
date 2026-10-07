@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard';
 import DashboardFacturacion from './components/DashboardFacturacion'; // ✨ NUEVO
 import Instituciones from './components/Instituciones';
 import MonitoreoContratos from './components/MonitoreoContratos';
+import Auditoria from './components/Auditoria';
 import CargasXML from './components/CargasXML'; // ✨ NUEVO
 import Admin from './components/Admin';
 import Login from './components/Login';
@@ -140,6 +141,7 @@ function App() {
               <Route path="/dashboard-facturacion" element={<DashboardFacturacion />} />
               <Route path="/instituciones" element={<Instituciones />} />
               <Route path="/monitoreo-contratos" element={<MonitoreoContratos userRole={userRole} />} />
+              <Route path="/auditoria" element={<Auditoria />} />
               <Route path="/cargas-xml" element={<CargasXML userRole={userRole} />} />
               <Route path="/facturacion" element={<Facturacion />} />
               {userRole === 'admin' && <Route path="/admin" element={<Admin />} />}

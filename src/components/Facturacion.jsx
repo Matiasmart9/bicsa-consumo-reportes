@@ -11,7 +11,9 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { logAuditoria } from '../hooks/useFirebase';
 import { descargarLibro, formatearFechaHora, hojaDesdeObjetos } from '../utils/excel';
-import { monedaDe, formatearMonto } from '../utils/moneda';
+import { MONEDAS, monedaDe, formatearMonto, montoConMoneda, redondearCuota } from '../utils/moneda';
+import CampoMonto from './instituciones/CampoMonto';
+import { puedeVerAuditoria } from '../utils/permisos';
 
 export const ModalAuditoria = ({ institucionId, institucionNombre, onClose }) => {
   const [logs, setLogs] = useState([]);
@@ -123,6 +125,7 @@ const Facturacion = () => {
 
   const [nivelAcceso, setNivelAcceso] = useState('vista'); 
   const [userRol, setUserRol] = useState('');
+  const [permisosUsuario, setPermisosUsuario] = useState(null);
   const [currentUserEmail, setCurrentUserEmail] = useState('Usuario');
 
   useEffect(() => {
@@ -140,6 +143,7 @@ const Facturacion = () => {
           if(docSnap.exists()) {
             const data = docSnap.data();
             setUserRol(data.rol);
+            setPermisosUsuario(data.permisos || null);
             if (data.rol === 'admin') setNivelAcceso('full');
             else if (data.permisos?.contabilidad?.nivel) setNivelAcceso(data.permisos.contabilidad.nivel);
           }
@@ -175,18 +179,23 @@ const Facturacion = () => {
       ruc: datosPreCargados?.ruc || '', 
       nroFactura: '', 
       fechaEmision: '', 
-      montoTotal: datosPreCargados?.montoTotal || '', 
+      moneda: datosPreCargados?.moneda || '',
+      montoTotal: datosPreCargados?.montoTotal ? String(datosPreCargados.montoTotal) : '', 
       plazoMeses: datosPreCargados?.plazoMeses || '1'
     });
     const [saving, setSaving] = useState(false);
 
     const handleSubmit = async (e) => {
       e.preventDefault();
+      if (!formData.moneda) {
+        sileo.warning({ title: 'Campo requerido', description: 'Falta seleccionar la Moneda (PYG o USD).' });
+        return;
+      }
       setSaving(true);
       
       const montoTotalNum = parseFloat(formData.montoTotal);
       const plazoNum = parseInt(formData.plazoMeses);
-      const montoCuota = Math.round(montoTotalNum / plazoNum);
+      const montoCuota = redondearCuota(montoTotalNum / plazoNum, formData.moneda);
       
       const cuotasGeneradas = [];
       let fechaCursor = new Date(formData.fechaEmision);
@@ -224,6 +233,7 @@ const Facturacion = () => {
         if (datosPreCargados?.institucionId) {
           try {
             await updateDoc(doc(db, 'instituciones', datosPreCargados.institucionId), {
+              moneda: formData.moneda,
               montoTotal: montoTotalNum,
               plazoMeses: plazoNum
             });
@@ -232,7 +242,7 @@ const Facturacion = () => {
           }
         }
 
-        await logAuditoria(docRef.id, 'Creación de Factura', `Factura ${formData.nroFactura} creada por ${montoTotalNum.toLocaleString()}Gs a ${plazoNum} meses.`);
+        await logAuditoria(docRef.id, 'Creación de Factura', `Factura ${formData.nroFactura} creada por ${montoConMoneda(montoTotalNum, formData.moneda)} a ${plazoNum} meses.`);
         onClose();
         sileo.success({ title: 'Factura generada', description: `Factura ${formData.nroFactura} guardada. Estado: Pendiente.` });
       } catch (err) {
@@ -271,8 +281,15 @@ const Facturacion = () => {
               <input required type="date" value={formData.fechaEmision} onChange={e=>setFormData({...formData, fechaEmision: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" />
             </div>
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">Monto Total (Gs)</label>
-              <input required type="number" value={formData.montoTotal} onChange={e=>setFormData({...formData, montoTotal: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" />
+              <label className="block text-sm font-bold text-gray-700 mb-1">Moneda</label>
+              <select required value={formData.moneda} onChange={e=>setFormData({...formData, moneda: e.target.value, montoTotal: e.target.value === 'USD' ? formData.montoTotal : String(formData.montoTotal).split('.')[0]})} className="w-full p-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-orange-500 outline-none">
+                <option value="">--Seleccionar--</option>
+                {MONEDAS.map(m => (<option key={m.valor} value={m.valor}>{m.etiqueta}</option>))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-1">Monto Total</label>
+              <CampoMonto value={formData.montoTotal} moneda={formData.moneda} onChange={(v)=>setFormData({...formData, montoTotal: v})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" placeholder="Ej: 3.200.000" />
             </div>
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-1">Plazo (Meses)</label>
@@ -296,12 +313,13 @@ const Facturacion = () => {
       nroFactura: factura.nroFactura,
       fechaEmision: factura.fechaEmision,
       estadoGeneral: factura.estadoGeneral || 'pendiente',
+      moneda: monedaDe(factura),
       montoTotal: factura.montoTotal,
       plazoMeses: factura.plazoMeses
     });
     const [saving, setSaving] = useState(false);
 
-    const regenerarCuotas = formData.montoTotal !== factura.montoTotal || formData.plazoMeses !== factura.plazoMeses;
+    const regenerarCuotas = parseFloat(formData.montoTotal) !== parseFloat(factura.montoTotal) || parseInt(formData.plazoMeses) !== parseInt(factura.plazoMeses);
 
     const handleSubmit = async (e) => {
       e.preventDefault();
@@ -313,7 +331,7 @@ const Facturacion = () => {
         datosParaActualizar.plazoMeses = parseInt(formData.plazoMeses);
 
         if (regenerarCuotas) {
-          const montoCuota = Math.round(datosParaActualizar.montoTotal / datosParaActualizar.plazoMeses);
+          const montoCuota = redondearCuota(datosParaActualizar.montoTotal / datosParaActualizar.plazoMeses, formData.moneda);
           const cuotasGeneradas = [];
           let fechaCursor = new Date(formData.fechaEmision);
           fechaCursor.setMinutes(fechaCursor.getMinutes() + fechaCursor.getTimezoneOffset());
@@ -337,6 +355,7 @@ const Facturacion = () => {
         if (factura.institucionId) {
           try {
             await updateDoc(doc(db, 'instituciones', factura.institucionId), {
+              moneda: formData.moneda,
               montoTotal: datosParaActualizar.montoTotal,
               plazoMeses: datosParaActualizar.plazoMeses
             });
@@ -345,7 +364,7 @@ const Facturacion = () => {
           }
         }
 
-        const detalleLog = regenerarCuotas ? `REGENERACIÓN de cuotera: ${datosParaActualizar.plazoMeses} meses por ${datosParaActualizar.montoTotal} Gs.` : `Edición de datos/estado a: ${formData.estadoGeneral}`;
+        const detalleLog = regenerarCuotas ? `REGENERACIÓN de cuotera: ${datosParaActualizar.plazoMeses} meses por ${montoConMoneda(datosParaActualizar.montoTotal, formData.moneda)}.` : `Edición de datos/estado a: ${formData.estadoGeneral}`;
         await logAuditoria(factura.id, 'Edición de Metadatos', detalleLog);
         onClose();
         sileo.success({ title: 'Factura actualizada', description: 'Los datos se guardaron correctamente.' });
@@ -380,8 +399,14 @@ const Facturacion = () => {
             
             <div className="grid grid-cols-2 gap-4 border-y border-gray-100 py-4 my-2">
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">Monto Total (Gs)</label>
-                <input required type="number" value={formData.montoTotal} onChange={e=>setFormData({...formData, montoTotal: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" />
+                <label className="block text-sm font-bold text-gray-700 mb-1">Moneda</label>
+                <select required value={formData.moneda} onChange={e=>setFormData({...formData, moneda: e.target.value, montoTotal: e.target.value === 'USD' ? formData.montoTotal : String(formData.montoTotal).split('.')[0]})} className="w-full p-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-orange-500 outline-none">
+                  {MONEDAS.map(m => (<option key={m.valor} value={m.valor}>{m.etiqueta}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Monto Total</label>
+                <CampoMonto value={formData.montoTotal} moneda={formData.moneda} onChange={(v)=>setFormData({...formData, montoTotal: v})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" placeholder="Ej: 3.200.000" />
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-1">Plazo (Meses)</label>
@@ -534,15 +559,15 @@ const Facturacion = () => {
             <div className="text-center mb-6 border-b-2 border-gray-800 pb-4"><h1 className="text-3xl font-black text-gray-900 tracking-tight">ESTADO DE CUENTA</h1><p className="text-gray-600 mt-1 font-medium">Sistema Web Consumo - BICSA</p></div>
             <div className="grid grid-cols-2 gap-4 mb-6 text-sm bg-gray-50 p-4 rounded-lg print:bg-transparent print:border print:border-gray-300">
               <div><p className="mb-1"><strong className="text-gray-700">Institución:</strong> <span className="font-bold text-gray-900">{factura.institucionNombre}</span></p><p><strong className="text-gray-700">RUC:</strong> {factura.ruc}</p></div>
-              <div className="text-right"><p className="mb-1"><strong className="text-gray-700">Nro. Factura:</strong> <span className="font-medium">{factura.nroFactura}</span></p><p className="mb-1"><strong className="text-gray-700">Fecha Emisión:</strong> {factura.fechaEmision}</p><p><strong className="text-gray-700">Monto Total:</strong> <span className="font-bold text-orange-600">{parseFloat(factura.montoTotal).toLocaleString()} Gs.</span></p></div>
+              <div className="text-right"><p className="mb-1"><strong className="text-gray-700">Nro. Factura:</strong> <span className="font-medium">{factura.nroFactura}</span></p><p className="mb-1"><strong className="text-gray-700">Fecha Emisión:</strong> {factura.fechaEmision}</p><p><strong className="text-gray-700">Monto Total:</strong> <span className="font-bold text-orange-600">{montoConMoneda(factura.montoTotal, monedaDe(factura))}</span></p></div>
             </div>
             <table className="w-full text-left border-collapse text-sm">
-              <thead><tr className="bg-gray-100 text-gray-700 print:border-b-2 print:border-gray-800"><th className="p-3 border-y border-gray-300 font-bold text-center">Cuota</th><th className="p-3 border-y border-gray-300 font-bold">Monto (Gs)</th><th className="p-3 border-y border-gray-300 font-bold">Vencimiento</th><th className="p-3 border-y border-gray-300 font-bold text-center print:hidden">Acción</th><th className="p-3 border-y border-gray-300 font-bold text-center">Estado</th><th className="p-3 border-y border-gray-300 font-bold">Fecha Pago</th></tr></thead>
+              <thead><tr className="bg-gray-100 text-gray-700 print:border-b-2 print:border-gray-800"><th className="p-3 border-y border-gray-300 font-bold text-center">Cuota</th><th className="p-3 border-y border-gray-300 font-bold">Monto ({monedaDe(factura)})</th><th className="p-3 border-y border-gray-300 font-bold">Vencimiento</th><th className="p-3 border-y border-gray-300 font-bold text-center print:hidden">Acción</th><th className="p-3 border-y border-gray-300 font-bold text-center">Estado</th><th className="p-3 border-y border-gray-300 font-bold">Fecha Pago</th></tr></thead>
               <tbody>
                 {cuotas.map((cuota, idx) => (
                   <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                     <td className="p-3 font-bold text-center text-gray-700">{cuota.numero}/{factura.plazoMeses}</td>
-                    <td className="p-3 font-medium text-gray-800">{parseFloat(cuota.monto).toLocaleString()}</td>
+                    <td className="p-3 font-medium text-gray-800">{formatearMonto(cuota.monto, monedaDe(factura))}</td>
                     <td className={`p-3 font-semibold ${cuota.estado === 'pagado' ? 'text-gray-500' : 'text-red-600'}`}>{cuota.fechaVencimiento}</td>
                     <td className="p-3 text-center print:hidden">
                       <button disabled={!canEdit} onClick={() => handleCheckPago(idx)} className={`p-1.5 rounded transition-all ${cuota.estado === 'pagado' ? 'bg-green-500 text-white shadow-sm' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'} ${!canEdit && 'opacity-50 cursor-not-allowed'}`}><CheckSquare size={20} /></button>
@@ -555,8 +580,8 @@ const Facturacion = () => {
             </table>
             <div className="mt-6 flex justify-end">
                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 min-w-[280px] print:bg-transparent print:border-gray-400">
-                 <p className="flex justify-between items-center mb-2"><span className="text-gray-600 font-medium">Total Pagado:</span> <span className="font-bold text-green-600 text-lg">{cuotas.filter(c => c.estado === 'pagado').reduce((sum, c) => sum + c.monto, 0).toLocaleString()} Gs</span></p>
-                 <p className="flex justify-between items-center pt-2 border-t border-gray-300"><span className="text-gray-600 font-bold">Saldo Pendiente:</span> <span className="font-black text-red-600 text-lg">{cuotas.filter(c => c.estado === 'pendiente').reduce((sum, c) => sum + c.monto, 0).toLocaleString()} Gs</span></p>
+                 <p className="flex justify-between items-center mb-2"><span className="text-gray-600 font-medium">Total Pagado:</span> <span className="font-bold text-green-600 text-lg">{montoConMoneda(cuotas.filter(c => c.estado === 'pagado').reduce((sum, c) => sum + c.monto, 0), monedaDe(factura))}</span></p>
+                 <p className="flex justify-between items-center pt-2 border-t border-gray-300"><span className="text-gray-600 font-bold">Saldo Pendiente:</span> <span className="font-black text-red-600 text-lg">{montoConMoneda(cuotas.filter(c => c.estado === 'pendiente').reduce((sum, c) => sum + c.monto, 0), monedaDe(factura))}</span></p>
                </div>
             </div>
           </div>
@@ -587,7 +612,7 @@ const Facturacion = () => {
                   <div>
                     <h3 className="font-bold text-gray-800 text-lg mb-1">{f.nroFactura || 'Sin Nro (Borrador)'}</h3>
                     <p className="text-sm text-gray-500 flex items-center"><Clock size={14} className="mr-1"/> Emitida: {f.fechaEmision || 'N/A'}</p>
-                    <p className="text-sm text-gray-500 mt-1 font-medium">Monto: <span className="text-orange-600 font-bold">{parseFloat(f.montoTotal).toLocaleString()} Gs</span> ({f.plazoMeses} cuotas)</p>
+                    <p className="text-sm text-gray-500 mt-1 font-medium">Monto: <span className="text-orange-600 font-bold">{montoConMoneda(f.montoTotal, monedaDe(f))}</span> ({f.plazoMeses} cuotas)</p>
                   </div>
                   <div className="text-right flex flex-col items-end">
                     <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-3
@@ -648,7 +673,7 @@ const Facturacion = () => {
         try {
           await updateDoc(doc(db, 'facturas', f.id), { estadoGeneral: 'no_renovada' });
           await logAuditoria(f.id, 'Renovación Iniciada', `La factura ${f.nroFactura} fue finalizada para dar paso a una nueva.`);
-          setDatosRenovacion({ institucionNombre: f.institucionNombre, ruc: f.ruc, montoTotal: f.montoTotal, plazoMeses: f.plazoMeses, institucionId: f.institucionId });
+          setDatosRenovacion({ institucionNombre: f.institucionNombre, ruc: f.ruc, moneda: monedaDe(f), montoTotal: f.montoTotal, plazoMeses: f.plazoMeses, institucionId: f.institucionId });
           setShowNuevaFactura(true);
         } catch (error) { sileo.error({ title: 'Error al renovar', description: error.message }); }
       }
@@ -699,7 +724,7 @@ const Facturacion = () => {
                     </div>
                     <button 
                       onClick={() => {
-                        setDatosRenovacion({ institucionNombre: inst.nombre, institucionId: inst.id, montoTotal: inst.montoTotal || '', plazoMeses: inst.plazoMeses || '1' });
+                        setDatosRenovacion({ institucionNombre: inst.nombre, institucionId: inst.id, moneda: monedaDe(inst), montoTotal: inst.montoTotal || '', plazoMeses: inst.plazoMeses || '1' });
                         setShowNuevaFactura(true);
                       }} 
                       className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold px-3 py-2 rounded-md transition-colors shadow-sm shrink-0"
@@ -769,7 +794,7 @@ const Facturacion = () => {
                   <tr key={f.id} className="hover:bg-orange-50/30 transition-colors">
                     <td className="p-4 font-bold text-gray-800">{f.institucionNombre}</td>
                     <td className="p-4 text-gray-600 font-medium">{f.nroFactura}</td>
-                    <td className="p-4 font-black text-orange-600">{parseFloat(f.montoTotal).toLocaleString()} Gs</td>
+                    <td className="p-4 font-black text-orange-600">{montoConMoneda(f.montoTotal, monedaDe(f))}</td>
                     <td className="p-4">
                       <div className="flex items-center justify-between mb-1 text-xs font-bold text-gray-500"><span>{pagadas} de {f.plazoMeses}</span><span>{Math.round((pagadas/f.plazoMeses)*100)}%</span></div>
                       <div className="w-full bg-gray-200 rounded-full h-2"><div className="bg-emerald-500 h-2 rounded-full transition-all" style={{width: `${(pagadas/f.plazoMeses)*100}%`}}></div></div>
@@ -787,7 +812,7 @@ const Facturacion = () => {
                         {canEdit && <button onClick={() => { setFacturaSeleccionada(f); setShowNotas(true); }} className="bg-yellow-100 text-yellow-700 p-2 rounded-lg hover:bg-yellow-200 shadow-sm relative" title="Notas y Comentarios"><MessageCircle size={18} />{notasCount > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full h-5 w-5 flex items-center justify-center">{notasCount}</span>}</button>}
                         {canEdit && <button onClick={() => handleRenovarFactura(f)} className="bg-green-100 text-green-700 p-2 rounded-lg hover:bg-green-200 shadow-sm" title="Renovar / Crear Nueva de esta Institución"><Copy size={18} /></button>}
                         <button onClick={() => { setFacturaSeleccionada(f); setShowHistorial(true); }} className="bg-slate-100 text-slate-700 p-2 rounded-lg hover:bg-slate-200 shadow-sm" title="Ver Historial de la Institución"><History size={18} /></button>
-                        <button onClick={() => { setFacturaSeleccionada(f); setShowAuditoria(true); }} className="bg-indigo-100 text-indigo-700 p-2 rounded-lg hover:bg-indigo-200 shadow-sm" title="Auditoría"><ShieldAlert size={18} /></button>
+                        {puedeVerAuditoria(userRol, permisosUsuario) && (<button onClick={() => { setFacturaSeleccionada(f); setShowAuditoria(true); }} className="bg-indigo-100 text-indigo-700 p-2 rounded-lg hover:bg-indigo-200 shadow-sm" title="Auditoría"><ShieldAlert size={18} /></button>)}
                         {canEdit && <button onClick={() => handleDeleteFactura(f)} className="bg-red-100 text-red-700 p-2 rounded-lg hover:bg-red-200 shadow-sm" title="Eliminar Factura"><Trash2 size={18} /></button>}
                       </div>
                     </td>

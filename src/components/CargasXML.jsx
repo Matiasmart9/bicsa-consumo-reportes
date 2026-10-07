@@ -5,12 +5,25 @@ import { useInstituciones, logAuditoria } from '../hooks/useFirebase';
 import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { sileo } from './sileo';
-import { descargarLibro, formatearFecha, hojaDesdeObjetos } from '../utils/excel';
+import { descargarLibro, etiquetaEstado, formatearFecha, hojaDesdeObjetos } from '../utils/excel';
+
+// Insignia del estado actual de la institución (el valor guardado 'vencido' se muestra como "No Renov.")
+const estiloEstado = (estado) => {
+  switch (estado) {
+    case 'pendiente': return { badge: 'bg-yellow-100 text-yellow-800 border-yellow-200', texto: 'Pendiente' };
+    case 'vencido': return { badge: 'bg-red-100 text-red-800 border-red-200', texto: 'No Renov.' };
+    case 'renovacion': return { badge: 'bg-blue-100 text-blue-800 border-blue-200', texto: 'En Renovación' };
+    default: return { badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', texto: 'Activo' };
+  }
+};
+
+const esActiva = (inst) => inst.estado === 'activo' || !inst.estado;
 
 const CargasXML = ({ userRole }) => {
   const { instituciones, loading, error } = useInstituciones();
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroXML, setFiltroXML] = useState('todos');
+  const [filtroEstado, setFiltroEstado] = useState('todos');
   const [updatingId, setUpdatingId] = useState(null);
 
   // 🆕 ESTADOS PARA PAGINACIÓN (Punto 2: 15 items por página)
@@ -23,7 +36,7 @@ const CargasXML = ({ userRole }) => {
   // 🆕 RESETEAR PÁGINA A 1 SI CAMBIAN LOS FILTROS
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filtroXML]);
+  }, [searchTerm, filtroXML, filtroEstado]);
 
   // 🆕 FUNCIÓN TOGGLE: Valida que exista fecha de primera carga antes de activar a SÍ
   const handleToggleXML = async (id, nombre, currentVal, fechaPrimeraCarga) => {
@@ -91,7 +104,7 @@ const CargasXML = ({ userRole }) => {
   };
 
   const exportarExcelXML = () => {
-    const listado = institucionesFiltradas.filter(i => i.cortaXML === true);
+    const listado = institucionesFiltradas.filter(i => i.cortaXML === true && (esActiva(i) || filtroEstado === 'vencido'));
     
     if (listado.length === 0) {
       return alert("No hay instituciones cargando XML para exportar con los filtros actuales.");
@@ -101,6 +114,7 @@ const CargasXML = ({ userRole }) => {
       'Nro': index + 1,
       'Institución': inst.nombre,
       'Plan / Categoría': inst.categoria || 'Sin Categoría',
+      'Estado': etiquetaEstado(inst.estado),
       'Cargas XML': 'SÍ',
       'Fecha Primera Carga XML': inst.fechaPrimeraCargaXML ? formatearFecha(inst.fechaPrimeraCargaXML) : 'No Especificada',
       'Inicio Contrato': formatearFecha(inst.contrato?.fechaInicio),
@@ -115,12 +129,17 @@ const CargasXML = ({ userRole }) => {
 
   const institucionesFiltradas = instituciones.filter(inst => {
     const matchSearch = inst.nombre.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    if (filtroXML === 'todos') return matchSearch;
-    if (filtroXML === 'si') return matchSearch && inst.cortaXML === true;
-    if (filtroXML === 'no') return matchSearch && inst.cortaXML !== true;
-    
-    return matchSearch;
+    const activa = esActiva(inst);
+    // Una institución que no renovó no cuenta como "carga XML", salvo que se filtre por No Renov.
+    const cargaXML = inst.cortaXML === true && (activa || filtroEstado === 'vencido');
+    const matchXML = filtroXML === 'todos'
+      || (filtroXML === 'si' && cargaXML)
+      || (filtroXML === 'no' && !cargaXML);
+    const matchEstado = filtroEstado === 'todos'
+      || (filtroEstado === 'activo' && activa)
+      || (filtroEstado === 'vencido' && inst.estado === 'vencido');
+
+    return matchSearch && matchXML && matchEstado;
   });
 
   // 🆕 LÓGICA DE PAGINACIÓN: Obtener los ítems de la página actual (hasta 15)
@@ -131,8 +150,8 @@ const CargasXML = ({ userRole }) => {
 
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
 
-  const totalCargan = instituciones.filter(i => i.cortaXML === true).length;
-  const totalNoCarganActivos = instituciones.filter(i => (i.estado === 'activo' || !i.estado) && i.cortaXML !== true).length;
+  const totalCargan = instituciones.filter(i => esActiva(i) && i.cortaXML === true).length;
+  const totalNoCarganActivos = instituciones.filter(i => esActiva(i) && i.cortaXML !== true).length;
 
   if (loading && instituciones.length === 0) {
     return (
@@ -181,26 +200,26 @@ const CargasXML = ({ userRole }) => {
 
       {/* Tarjetas Resumen */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8 relative z-10">
-        <div className="bg-white p-6 rounded-xl border border-slate-200/80 flex items-center shadow-md">
-          <Building className="text-slate-400 mr-3 animate-pulse" size={24} />
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Total Clientes</p>
-            <p className="text-2xl font-black text-slate-800">{instituciones.length}</p>
+        <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-md">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Clientes</p>
+            <Building className="text-slate-400" size={24} />
           </div>
+          <p className="mt-3 text-4xl font-black text-slate-800 text-center">{instituciones.length}</p>
         </div>
-        <div className="bg-white p-6 rounded-xl border border-slate-200/80 flex items-center shadow-md border-l-4 border-emerald-500">
-          <CheckCircle className="text-emerald-500 mr-3" size={24} />
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Cargan XML</p>
-            <p className="text-2xl font-black text-emerald-600">{totalCargan}</p>
+        <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-md border-l-4 border-emerald-500">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cargan XML</p>
+            <CheckCircle className="text-emerald-500" size={24} />
           </div>
+          <p className="mt-3 text-4xl font-black text-emerald-600 text-center">{totalCargan}</p>
         </div>
-        <div className="bg-white p-6 rounded-xl border border-slate-200/80 flex items-center shadow-md border-l-4 border-amber-500">
-          <XCircle className="text-amber-500 mr-3" size={24} />
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Sin Cargas XML Activos</p>
-            <p className="text-2xl font-black text-amber-600">{totalNoCarganActivos}</p>
+        <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-md border-l-4 border-amber-500">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Sin Cargas XML Activos</p>
+            <XCircle className="text-amber-500" size={24} />
           </div>
+          <p className="mt-3 text-4xl font-black text-amber-600 text-center">{totalNoCarganActivos}</p>
         </div>
       </div>
 
@@ -217,15 +236,29 @@ const CargasXML = ({ userRole }) => {
             className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg bg-slate-50 text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm transition-all" 
           />
         </div>
-        <select 
-          value={filtroXML} 
-          onChange={e => setFiltroXML(e.target.value)} 
-          className="w-full md:w-auto p-2.5 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm font-medium cursor-pointer transition-all"
-        >
-          <option value="todos">Todos los Clientes</option>
-          <option value="si">Solo los que Cargan XML</option>
-          <option value="no">Solo los que NO Cargan XML</option>
-        </select>
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Estado</span>
+            <select 
+              value={filtroEstado} 
+              onChange={e => setFiltroEstado(e.target.value)} 
+              className="flex-1 p-2.5 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm font-medium cursor-pointer transition-all"
+            >
+              <option value="todos">- Todos -</option>
+              <option value="activo">Activos</option>
+              <option value="vencido">No Renov.</option>
+            </select>
+          </label>
+          <select 
+            value={filtroXML} 
+            onChange={e => setFiltroXML(e.target.value)} 
+            className="w-full sm:w-auto p-2.5 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm font-medium cursor-pointer transition-all"
+          >
+            <option value="todos">Todos los Clientes</option>
+            <option value="si">Solo los que Cargan XML</option>
+            <option value="no">Solo los que NO Cargan XML</option>
+          </select>
+        </div>
       </div>
 
       {/* Tabla Listado */}
@@ -234,6 +267,7 @@ const CargasXML = ({ userRole }) => {
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
               <th className="p-4 font-bold">Institución / Categoría</th>
+              <th className="p-4 font-bold text-center">Estado</th>
               <th className="p-4 font-bold text-center">Carga XML Activa</th>
               <th className="p-4 font-bold text-center">Fecha Primera Carga</th>
               <th className="p-4 font-bold text-center">Contrato Vence</th>
@@ -242,12 +276,13 @@ const CargasXML = ({ userRole }) => {
           <tbody className="divide-y divide-slate-100 text-slate-750">
             {currentItems.length === 0 ? (
               <tr>
-                <td colSpan="4" className="text-center py-10 text-slate-400 font-medium">
+                <td colSpan="5" className="text-center py-10 text-slate-400 font-medium">
                   No hay instituciones que coincidan con la búsqueda.
                 </td>
               </tr>
             ) : currentItems.map(inst => {
               const cargando = inst.cortaXML === true;
+              const est = estiloEstado(inst.estado);
               return (
                 <tr key={inst.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="p-4">
@@ -255,6 +290,9 @@ const CargasXML = ({ userRole }) => {
                     <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase mt-1 inline-block">
                       {inst.categoria || 'Sin Categoría'}
                     </span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold border ${est.badge}`}>{est.texto}</span>
                   </td>
                   <td className="p-4 text-center">
                     {/* 🆕 Toggle valida la fecha actual de primera carga */}

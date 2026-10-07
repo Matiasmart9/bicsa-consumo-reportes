@@ -1,0 +1,129 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore – Sistema Consumo MiPymes BICSA
+//
+// Principio: nadie accede a nada sin sesión iniciada Y sin un documento activo en la
+// colección "usuarios". El rol y los permisos se leen de ese documento, igual que hace la app.
+// Todo lo que no está permitido aquí explícitamente queda denegado.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Utilidades ----------
+    function iniciada() {
+      return request.auth != null;
+    }
+
+    function perfil() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    // Usuario con documento propio y activo (una cuenta de Authentication sin documento no puede nada)
+    function activo() {
+      return iniciada()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && perfil().get('activo', false) == true;
+    }
+
+    function rol() {
+      return perfil().get('rol', '');
+    }
+
+    function esAdmin() {
+      return activo() && rol() == 'admin';
+    }
+
+    function permisos() {
+      let p = perfil().get('permisos', {});
+      return p is map ? p : {};
+    }
+
+    function modulo(nombre) {
+      let m = permisos().get(nombre, {});
+      return m is map ? m : {};
+    }
+
+    function permiso(nombre, clave) {
+      return activo() && modulo(nombre).get(clave, false) == true;
+    }
+
+    // Contabilidad con nivel "full" (puede crear y editar facturas)
+    function contabilidadCompleta() {
+      return permiso('contabilidad', 'acceso') && modulo('contabilidad').get('nivel', '') == 'full';
+    }
+
+    // Auditoría: administrador, permiso explícito, o Contabilidad anterior a este permiso
+    function puedeAuditar() {
+      return esAdmin()
+        || permiso('auditoria', 'acceso')
+        || (activo() && rol() == 'contabilidad' && modulo('auditoria').get('acceso', null) == null);
+    }
+
+    // Campos que cambian en una actualización
+    function camposModificados() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ---------- Usuarios ----------
+    match /usuarios/{uid} {
+      // Cada uno lee su propio documento (login, menú, permisos); el administrador lee todos
+      allow read: if iniciada() && (request.auth.uid == uid || esAdmin());
+
+      // Solo el administrador crea, elimina y modifica usuarios, roles y permisos
+      allow create, delete: if esAdmin();
+
+      // Cada usuario solo puede actualizar su último acceso y sus notificaciones leídas
+      allow update: if esAdmin()
+        || (iniciada() && request.auth.uid == uid
+            && camposModificados().hasOnly(['ultimoAcceso', 'ultimoLoginIP', 'notificacionesLeidas']));
+    }
+
+    // ---------- Instituciones ----------
+    match /instituciones/{id} {
+      allow read: if activo();
+
+      allow create: if esAdmin() || permiso('instituciones', 'agregar');
+      allow delete: if esAdmin() || permiso('instituciones', 'eliminar');
+
+      allow update: if esAdmin()
+        || permiso('instituciones', 'editar')
+        // Cargas XML: cualquier usuario activo puede cambiar solo estos dos campos
+        || (activo() && camposModificados().hasOnly(['cortaXML', 'fechaPrimeraCargaXML']))
+        // Registrar, editar o eliminar consumo mensual
+        || (permiso('instituciones', 'registrarConsumo') && camposModificados().hasOnly(['consumoPorMes', 'contrato']))
+        // Facturación sincroniza monto, plazo y moneda
+        || (permiso('contabilidad', 'acceso') && camposModificados().hasOnly(['montoTotal', 'plazoMeses', 'moneda']));
+    }
+
+    // ---------- Facturas ----------
+    match /facturas/{id} {
+      allow read: if esAdmin()
+        || permiso('contabilidad', 'acceso')
+        || permiso('contabilidad', 'dashboardFacturacion');
+
+      allow create: if esAdmin()
+        || contabilidadCompleta()
+        // Al crear una institución se genera su borrador de factura
+        || (permiso('instituciones', 'agregar') && request.resource.data.estadoGeneral == 'incompleta');
+
+      allow update, delete: if esAdmin() || contabilidadCompleta();
+    }
+
+    // ---------- Comentarios ----------
+    match /comentarios/{id} {
+      allow read: if activo();
+      allow create: if esAdmin()
+        || (permiso('instituciones', 'comentar') && request.resource.data.autorUid == request.auth.uid);
+      allow update: if esAdmin() || permiso('instituciones', 'comentar');
+      allow delete: if esAdmin()
+        || (permiso('instituciones', 'comentar') && resource.data.autorUid == request.auth.uid);
+    }
+
+    // ---------- Auditoría (registro inmutable) ----------
+    match /auditoria/{id} {
+      allow read: if puedeAuditar();
+      // Cualquier usuario activo registra sus acciones, siempre a su nombre
+      allow create: if activo() && request.resource.data.usuario == request.auth.token.email;
+      allow update, delete: if false;
+    }
+  }
+}

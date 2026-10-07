@@ -7,7 +7,9 @@ import {
 import { 
   createUserWithEmailAndPassword, updateProfile, deleteUser, onAuthStateChanged
 } from 'firebase/auth';
-import { auth, db } from '../firebase';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, signOut } from 'firebase/auth';
+import { auth, db, firebaseConfig } from '../firebase';
 
 // ✨ NUEVA FUNCIÓN GLOBAL DE AUDITORÍA
 export const logAuditoria = async (institucionId, accion, detalles) => {
@@ -357,10 +359,19 @@ export const useUsuarios = () => {
   const agregarUsuario = async (nuevoUsuario) => {
     try {
       setLoading(true);
-      const userCredential = await createUserWithEmailAndPassword(auth, nuevoUsuario.email, nuevoUsuario.password);
-      const user = userCredential.user;
-      
-      await updateProfile(user, { displayName: nuevoUsuario.nombre });
+      // La cuenta se crea con una app secundaria: así la sesión del administrador sigue abierta
+      // (crear un usuario con la app principal cerraría la sesión actual e iniciaría la del usuario nuevo).
+      const appSecundaria = initializeApp(firebaseConfig, `crear-usuario-${Date.now()}`);
+      const authSecundaria = getAuth(appSecundaria);
+      let user;
+      try {
+        const userCredential = await createUserWithEmailAndPassword(authSecundaria, nuevoUsuario.email, nuevoUsuario.password);
+        user = userCredential.user;
+        await updateProfile(user, { displayName: nuevoUsuario.nombre });
+      } finally {
+        await signOut(authSecundaria).catch(() => {});
+        await deleteApp(appSecundaria).catch(() => {});
+      }
       
       const usuarioData = {
         uid: user.uid,

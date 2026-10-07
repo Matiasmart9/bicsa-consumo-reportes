@@ -1,39 +1,78 @@
 // src/components/Dashboard.jsx
-import React, { useState } from 'react';
-import { BarChart2, TrendingUp, AlertCircle, Loader2, RefreshCw, Building, Search, X, Clock } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  BarChart2, AlertCircle, AlertTriangle, CheckCircle2, Loader2, RefreshCw, Building, Search, X, Clock,
+  FileSpreadsheet, EyeOff, ChevronDown, ChevronLeft, ChevronRight, Calendar, Gauge, RotateCcw, ArrowUpDown
+} from 'lucide-react';
+import { motion } from 'framer-motion';
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area
+} from 'recharts';
 import { useInstituciones } from '../hooks/useFirebase';
 import { generarReporteConsumoExcel } from '../utils/reporteConsumo';
+import { etiquetaEstado, formatearFecha } from '../utils/excel';
+import { APP_VERSION } from '../version';
+import { debeMonitorearVencimiento } from '../utils/plan';
+import { MedidorUso, ChipVigencia } from './instituciones/piezas';
+import { colorUso, diasParaVencer, gradienteCategoria, iniciales } from './instituciones/ayudas';
 
-// Componente para la barra de progreso (Renovado para modo claro)
-const ProgressBar = ({ value, max }) => {
-  const percentage = max > 0 ? (value / max) * 100 : 0;
-  let colorClass = 'bg-brand-500'; // Color base corporativo
-  if (percentage > 70) colorClass = 'bg-amber-500'; // Advertencia
-  if (percentage > 90) colorClass = 'bg-red-500 danger-pulse';   // Peligro
+const ITEMS_POR_PAGINA = 12;
 
-  return (
-    <div className="w-full bg-slate-200 rounded-full h-3 border border-slate-300/30 shadow-inner overflow-hidden">
-      <div 
-        className={`${colorClass} h-full rounded-full transition-all duration-700 ease-out shadow-sm`} 
-        style={{ width: `${Math.min(percentage, 100)}%` }}
-      ></div>
-    </div>
-  );
+// Nivel de consumo según el porcentaje usado del contrato
+const nivelDeConsumo = (pct) => {
+  if (pct > 90) return { clave: 'critico', texto: 'Crítico', color: '#ef4444', badge: 'bg-red-100 text-red-800 border-red-200', barra: 'from-red-500 to-rose-500', icono: AlertCircle };
+  if (pct > 70) return { clave: 'atencion', texto: 'Atención', color: '#f59e0b', badge: 'bg-amber-100 text-amber-800 border-amber-200', barra: 'from-amber-400 to-orange-500', icono: AlertTriangle };
+  return { clave: 'saludable', texto: 'Saludable', color: '#10b981', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', barra: 'from-emerald-500 to-teal-400', icono: CheckCircle2 };
+};
+
+const estiloEstado = (estado) => {
+  switch (estado) {
+    case 'pendiente': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    case 'vencido': return 'bg-red-100 text-red-800 border-red-200';
+    case 'renovacion': return 'bg-blue-100 text-blue-800 border-blue-200';
+    default: return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  }
+};
+
+const textoEstado = (estado) => (estado === 'renovacion' ? 'En Renovación' : etiquetaEstado(estado).replace(/^./, c => c.toUpperCase()));
+
+const esActiva = (i) => i.estado === 'activo' || !i.estado;
+
+// Plan que ya no requiere seguimiento mensual de consumo (aunque el contrato siga activo)
+const sinSeguimiento = (i) => !debeMonitorearVencimiento(i);
+
+const NIVEL_SIN_SEGUIMIENTO = {
+  clave: 'libre', texto: 'Sin seguimiento', color: '#94a3b8',
+  badge: 'bg-slate-100 text-slate-700 border-slate-300', barra: 'from-slate-300 to-slate-400', icono: EyeOff
+};
+
+const TarjetaGrafico = ({ titulo, icono: Icono, children, vacio, mensajeVacio = 'Sin datos para mostrar' }) => (
+  <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+    <h3 className="flex items-center text-sm font-extrabold text-slate-800 mb-3">
+      <Icono size={16} className="mr-2 text-brand-500" /> {titulo}
+    </h3>
+    {vacio ? <p className="h-52 flex items-center justify-center text-center px-6 text-sm text-slate-400 font-medium">{mensajeVacio}</p> : <div className="h-52">{children}</div>}
+  </div>
+);
+
+const estiloTooltip = {
+  borderRadius: '12px',
+  background: 'rgba(255,255,255,0.97)',
+  border: '1px solid rgba(0,0,0,0.08)',
+  boxShadow: '0 8px 30px rgba(0,0,0,0.1)',
+  fontSize: '12px'
 };
 
 const Dashboard = ({ onExportExcel }) => {
   const { instituciones, loading, error } = useInstituciones();
   const [searchTerm, setSearchTerm] = useState('');
+  const [filtro, setFiltro] = useState('todas');
+  const [orden, setOrden] = useState('consumo');
   const [isExporting, setIsExporting] = useState(false);
-
-  // 🆕 ESTADOS PARA PAGINACIÓN
+  const [expandidas, setExpandidas] = useState({});
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 12;
 
-  // 🆕 RESETEAR PÁGINA A 1 SI EL USUARIO BUSCA ALGO
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm]);
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, filtro, orden]);
 
   // --- LÓGICA DE EXPORTACIÓN INTACTA ---
   const generarReporteExcel = async () => {
@@ -52,27 +91,108 @@ const Dashboard = ({ onExportExcel }) => {
   };
   // ---------------------------------------------
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (onExportExcel && window.location.pathname === '/dashboard') {
       onExportExcel(generarReporteExcel);
     }
-  }, [onExportExcel]); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onExportExcel]);
 
-  const institucionesFiltradas = instituciones.filter((institucion) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
-    const nombreCoincide = institucion.nombre.toLowerCase().includes(searchLower);
-    return nombreCoincide;
-  });
+  const datosUso = (inst) => {
+    const asignadas = inst.contrato?.asignadas || 0;
+    const consumidas = inst.contrato?.consumidas || 0;
+    return { asignadas, consumidas, restantes: asignadas - consumidas, pct: asignadas > 0 ? (consumidas / asignadas) * 100 : 0 };
+  };
 
-  // 🆕 LÓGICA DE PAGINACIÓN: Extraer solo los ítems de la página actual
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = institucionesFiltradas.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(institucionesFiltradas.length / itemsPerPage);
+  // Contadores de los filtros rápidos (sobre todas las instituciones)
+  const conteos = useMemo(() => ({
+    todas: instituciones.length,
+    activo: instituciones.filter(esActiva).length,
+    pendiente: instituciones.filter(i => i.estado === 'pendiente').length,
+    vencido: instituciones.filter(i => i.estado === 'vencido').length,
+    alto: instituciones.filter(i => !sinSeguimiento(i) && datosUso(i).pct >= 75).length,
+    sin: instituciones.filter(sinSeguimiento).length
+  }), [instituciones]);
 
-  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+  const institucionesFiltradas = useMemo(() => {
+    const texto = searchTerm.trim().toLowerCase();
+    return instituciones
+      .filter(i => {
+        if (texto && !i.nombre.toLowerCase().includes(texto)) return false;
+        if (filtro === 'activo') return esActiva(i);
+        if (filtro === 'pendiente') return i.estado === 'pendiente';
+        if (filtro === 'vencido') return i.estado === 'vencido';
+        if (filtro === 'alto') return !sinSeguimiento(i) && datosUso(i).pct >= 75;
+        if (filtro === 'sin') return sinSeguimiento(i);
+        return true;
+      })
+      .sort((a, b) => {
+        if (orden === 'nombre') return a.nombre.localeCompare(b.nombre);
+        if (orden === 'vence') {
+          const da = diasParaVencer(a); const db = diasParaVencer(b);
+          return (da === null ? Infinity : da) - (db === null ? Infinity : db);
+        }
+        // Los que no tienen seguimiento van al final: no son prioridad
+        const sa = sinSeguimiento(a); const sb = sinSeguimiento(b);
+        if (sa !== sb) return sa ? 1 : -1;
+        return datosUso(b).pct - datosUso(a).pct;
+      });
+  }, [instituciones, searchTerm, filtro, orden]);
 
+  // ---- Resumen general y gráficos (sobre lo que se está viendo, sin las que no tienen seguimiento) ----
+  const seguidas = useMemo(() => institucionesFiltradas.filter(i => !sinSeguimiento(i)), [institucionesFiltradas]);
+  const excluidas = institucionesFiltradas.length - seguidas.length;
+  const mensajeVacio = seguidas.length === 0 && excluidas > 0
+    ? 'Estas instituciones no tienen seguimiento de consumo, por eso no se incluyen en los gráficos.'
+    : undefined;
+
+  const resumen = useMemo(() => {
+    const niveles = { saludable: 0, atencion: 0, critico: 0 };
+    seguidas.forEach(i => {
+      const u = datosUso(i);
+      if (u.asignadas > 0) niveles[nivelDeConsumo(u.pct).clave] += 1;
+    });
+    return { niveles };
+  }, [seguidas]);
+
+  const datosDonut = [
+    { name: 'Saludable', value: resumen.niveles.saludable, color: '#10b981' },
+    { name: 'Atención', value: resumen.niveles.atencion, color: '#f59e0b' },
+    { name: 'Crítico', value: resumen.niveles.critico, color: '#ef4444' }
+  ].filter(d => d.value > 0);
+
+  const datosTop = useMemo(() => seguidas
+    .map(i => ({ nombre: i.nombre, ...datosUso(i) }))
+    .filter(d => d.asignadas > 0)
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, 8)
+    .map(d => ({ name: d.nombre.length > 16 ? d.nombre.slice(0, 15) + '…' : d.nombre, completo: d.nombre, pct: Math.round(d.pct * 10) / 10, color: colorUso(d.pct) })),
+  [seguidas]);
+
+  const serieMensual = useMemo(() => {
+    const porMes = {};
+    seguidas.forEach(i => Object.entries(i.consumoPorMes || {}).forEach(([m, v]) => { porMes[m] = (porMes[m] || 0) + (Number(v) || 0); }));
+    return Object.entries(porMes).sort(([a], [b]) => a.localeCompare(b)).slice(-12).map(([m, v]) => ({
+      name: new Date(m + '-01T00:00:00').toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).toUpperCase(),
+      consumo: v
+    }));
+  }, [seguidas]);
+
+  // Paginación
+  const totalPages = Math.max(1, Math.ceil(institucionesFiltradas.length / ITEMS_POR_PAGINA));
+  const indexOfFirstItem = (currentPage - 1) * ITEMS_POR_PAGINA;
+  const currentItems = institucionesFiltradas.slice(indexOfFirstItem, indexOfFirstItem + ITEMS_POR_PAGINA);
+  const paginasVisibles = () => {
+    const paginas = [];
+    for (let p = 1; p <= totalPages; p++) {
+      if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) paginas.push(p);
+      else if (paginas[paginas.length - 1] !== '…') paginas.push('…');
+    }
+    return paginas;
+  };
+
+  const hayFiltros = searchTerm || filtro !== 'todas';
+  const limpiar = () => { setSearchTerm(''); setFiltro('todas'); };
 
   // Mostrar loading
   if (loading && instituciones.length === 0) {
@@ -93,9 +213,9 @@ const Dashboard = ({ onExportExcel }) => {
         <div className="text-center bg-white p-8 rounded-2xl border border-slate-200 max-w-md shadow-lg relative z-10 backdrop-blur-md">
           <AlertCircle size={48} className="text-red-500 mx-auto mb-4" />
           <p className="text-red-800 font-bold mb-2 text-lg">Error de conexión</p>
-          <p className="text-slate-655 text-sm mb-6">{error}</p>
-          <button 
-            onClick={() => window.location.reload()} 
+          <p className="text-slate-600 text-sm mb-6">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
             className="bg-red-600 text-white px-6 py-2.5 rounded-xl hover:bg-red-700 flex items-center space-x-2 mx-auto font-bold transition-all active:scale-95 shadow-lg shadow-red-600/10"
           >
             <RefreshCw size={18} />
@@ -106,10 +226,17 @@ const Dashboard = ({ onExportExcel }) => {
     );
   }
 
+  const filtrosRapidos = [
+    { clave: 'todas', texto: 'Todas' },
+    { clave: 'activo', texto: 'Activas' },
+    { clave: 'pendiente', texto: 'Pendientes' },
+    { clave: 'vencido', texto: 'No Renov.' },
+    { clave: 'alto', texto: 'Alto consumo' },
+    { clave: 'sin', texto: 'Sin seg Premium', ayuda: 'Instituciones que pasaron a Plan Premium y no hace falta hacerles seguimiento de consultas.' }
+  ];
+
   return (
     <div className="bg-slate-50 p-4 sm:p-8 min-h-screen relative overflow-hidden grid-overlay">
-      
-      {/* Background Glow Spots */}
       <div className="absolute top-10 left-10 w-96 h-96 rounded-full blur-[150px] glow-spot-orange pointer-events-none"></div>
       <div className="absolute bottom-10 right-10 w-96 h-96 rounded-full blur-[150px] glow-spot-purple pointer-events-none"></div>
 
@@ -123,306 +250,297 @@ const Dashboard = ({ onExportExcel }) => {
         </div>
       )}
 
-      {/* HEADER PRINCIPAL */}
-      <header className="mb-8 relative z-10">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+      {/* ENCABEZADO */}
+      <header className="mb-6 relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-400 text-white flex items-center justify-center shadow-lg shadow-brand-500/20 mr-4">
+            <BarChart2 size={28} />
+          </div>
           <div>
-            <h1 className="text-3xl font-extrabold text-slate-800 flex items-center tracking-tight">
-              <BarChart2 size={32} className="mr-3 text-brand-500" />
-              Dashboard de Consumo
-            </h1>
-            <p className="text-slate-500 font-medium mt-1">
+            <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Dashboard de Consumo</h1>
+            <p className="text-slate-500 font-medium">
               Monitoreo de Instituciones
-              {loading && <span className="text-brand-500 ml-2 animate-pulse text-sm">🔄 Sincronizando...</span>}
+              {loading && <span className="inline-flex items-center text-brand-500 ml-2 animate-pulse text-sm"><RefreshCw size={13} className="mr-1 animate-spin" /> Sincronizando...</span>}
             </p>
           </div>
-          <div className="mt-4 sm:mt-0 px-4 py-2 bg-white rounded-xl border border-slate-200 text-sm font-semibold text-slate-500 shadow-sm">
-            Actualizado: <span className="text-slate-800">{new Date().toLocaleString('es-ES')}</span>
+        </div>
+        <div className="flex items-center gap-3 self-start sm:self-auto">
+          <div className="px-4 py-2 bg-white rounded-xl border border-slate-200 text-sm font-semibold text-slate-500 shadow-sm inline-flex items-center">
+            <Calendar size={16} className="mr-2 text-brand-500" />
+            Actualizado: <span className="text-slate-800 ml-1">{new Date().toLocaleString('es-ES')}</span>
           </div>
+          <button onClick={generarReporteExcel} disabled={isExporting || instituciones.length === 0} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center shadow-lg shadow-emerald-600/10 hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-50">
+            <FileSpreadsheet size={18} className="mr-2" /> Excel
+          </button>
         </div>
       </header>
 
-      {/* Buscador */}
-      {instituciones.length > 0 && (
-        <div className="mb-8 flex justify-center relative z-10">
-          <div className="relative w-full max-w-xl">
-            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
-            <input
-              type="text"
-              placeholder="Buscar instituciones por nombre..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-12 py-3.5 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 bg-white shadow-sm font-medium text-slate-700 placeholder-slate-400 transition-all outline-none"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute right-4 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-brand-500 transition-colors"
-              >
-                <X size={20} />
-              </button>
-            )}
+      {instituciones.length === 0 ? (
+        <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-md relative z-10">
+          <div className="bg-slate-50 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Building size={40} className="text-slate-400" />
+          </div>
+          <p className="text-xl font-bold text-slate-800 mb-2">No hay instituciones registradas</p>
+          <p className="text-slate-500 mb-8 max-w-md mx-auto">
+            Aún no se ha cargado información. Las instituciones aparecerán aquí una vez que sean creadas en el sistema.
+          </p>
+          <div className="inline-flex items-center bg-brand-50 px-4 py-2 rounded-lg border border-brand-100">
+            <p className="text-brand-800 text-sm font-medium flex items-center">
+              <RefreshCw size={16} className="mr-2 text-brand-500" />
+              Sincronización automática activa
+            </p>
           </div>
         </div>
-      )}
-
-      {/* Lista de instituciones */}
-      <div className="space-y-8 relative z-10">
-        {instituciones.length === 0 ? (
-          <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-md">
-            <div className="bg-slate-50 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Building size={40} className="text-slate-400" />
-            </div>
-            <p className="text-xl font-bold text-slate-800 mb-2">No hay instituciones registradas</p>
-            <p className="text-slate-500 mb-8 max-w-md mx-auto">
-              Aún no se ha cargado información. Las instituciones aparecerán aquí una vez que sean creadas en el sistema.
+      ) : (
+        <>
+          {excluidas > 0 && (
+            <p className="relative z-10 mb-3 flex items-center text-xs font-semibold text-slate-500">
+              <EyeOff size={13} className="mr-1.5 text-slate-400" />
+              Los gráficos no incluyen {excluidas} {excluidas === 1 ? 'institución sin seguimiento' : 'instituciones sin seguimiento'} de consumo.
             </p>
-            <div className="inline-flex items-center bg-brand-50 px-4 py-2 rounded-lg border border-brand-100">
-              <p className="text-brand-850 text-sm font-medium flex items-center">
-                <RefreshCw size={16} className="mr-2 text-brand-500" />
-                Sincronización automática activa
-              </p>
-            </div>
+          )}
+
+          {/* GRÁFICOS */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6 relative z-10">
+            <TarjetaGrafico titulo="Estado del consumo" icono={Gauge} vacio={datosDonut.length === 0} mensajeVacio={mensajeVacio}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={datosDonut} dataKey="value" nameKey="name" innerRadius={45} outerRadius={72} paddingAngle={3} stroke="none">
+                    {datosDonut.map(d => <Cell key={d.name} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip contentStyle={estiloTooltip} formatter={(v, n) => [`${v} ${v === 1 ? 'institución' : 'instituciones'}`, n]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex justify-center gap-4 -mt-1 text-xs font-bold text-slate-500">
+                {datosDonut.map(d => (
+                  <span key={d.name} className="inline-flex items-center"><span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ backgroundColor: d.color }} />{d.name} ({d.value})</span>
+                ))}
+              </div>
+            </TarjetaGrafico>
+
+            <TarjetaGrafico titulo="Mayor consumo (% del contrato)" icono={BarChart2} vacio={datosTop.length === 0} mensajeVacio={mensajeVacio}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={datosTop} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                  <XAxis type="number" domain={[0, 100]} hide />
+                  <YAxis type="category" dataKey="name" width={104} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} />
+                  <Tooltip cursor={{ fill: 'rgba(0,0,0,0.04)' }} contentStyle={estiloTooltip} formatter={(v) => [`${v}%`, 'Uso']} labelFormatter={(_, p) => p?.[0]?.payload?.completo || ''} />
+                  <Bar dataKey="pct" radius={[0, 6, 6, 0]} barSize={14}>
+                    {datosTop.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </TarjetaGrafico>
+
+            <TarjetaGrafico titulo="Consumo mensual (total)" icono={Clock} vacio={serieMensual.length === 0} mensajeVacio={mensajeVacio}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={serieMensual} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradMensual" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ff5105" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#ff5105" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#64748b', fontWeight: 600 }} />
+                  <YAxis hide />
+                  <Tooltip contentStyle={estiloTooltip} formatter={(v) => [v.toLocaleString(), 'Consultas']} />
+                  <Area type="monotone" dataKey="consumo" stroke="#ff5105" strokeWidth={2} fill="url(#gradMensual)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </TarjetaGrafico>
           </div>
-        ) : (
-          <>
-            {searchTerm && (
-              <div className="text-center mb-6">
-                <span className="inline-block bg-brand-50 text-brand-700 px-4 py-1.5 rounded-full text-sm font-bold shadow-sm border border-brand-100">
-                  Mostrando {institucionesFiltradas.length} de {instituciones.length} resultados
-                </span>
+
+          {/* FILTROS */}
+          <div className="relative z-10 mb-6 bg-white/80 backdrop-blur border border-slate-200 rounded-2xl p-3 shadow-sm">
+            <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
+              <div className="relative w-full lg:w-80 lg:flex-none">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-brand-500" size={18} />
+                <input
+                  type="text"
+                  placeholder="Buscar institución por nombre..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-9 py-2.5 border-2 border-brand-200 rounded-xl bg-white text-slate-800 placeholder-slate-500 font-medium outline-none shadow-sm focus:ring-4 focus:ring-brand-500/15 focus:border-brand-500 text-sm transition-all"
+                />
+                {searchTerm && (
+                  <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={16} /></button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2 lg:mr-auto">
+                {filtrosRapidos.map(f => (
+                  <button
+                    key={f.clave}
+                    title={f.ayuda}
+                    onClick={() => setFiltro(f.clave)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 ${filtro === f.clave ? 'bg-brand-50 border-brand-500 text-brand-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    {f.texto} <span className="ml-1 opacity-60">{conteos[f.clave]}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative lg:w-52">
+                <ArrowUpDown className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <select value={orden} onChange={(e) => setOrden(e.target.value)} className="w-full pl-9 pr-8 py-2.5 border border-slate-200 rounded-xl bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm font-medium appearance-none cursor-pointer transition-all">
+                  <option value="consumo">Orden: Mayor consumo</option>
+                  <option value="nombre">Orden: Nombre (A-Z)</option>
+                  <option value="vence">Orden: Vence primero</option>
+                </select>
+              </div>
+            </div>
+            {hayFiltros && (
+              <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500">{institucionesFiltradas.length} de {instituciones.length} instituciones</span>
+                <button onClick={limpiar} className="inline-flex items-center text-xs font-bold text-brand-600 hover:text-brand-700">
+                  <RotateCcw size={13} className="mr-1" /> Limpiar filtros
+                </button>
               </div>
             )}
+          </div>
 
-            {/* 🆕 ACA MAPEA SOLO LAS INSTITUCIONES DE LA PÁGINA ACTUAL */}
-            {currentItems.map((inst) => {
-              const { nombre, contrato } = inst;
-              const asignadas = contrato?.asignadas || 0;
-              const consumidas = contrato?.consumidas || 0;
-              const restantes = asignadas - consumidas;
-              const porcentajeUso = asignadas > 0 ? (consumidas / asignadas) * 100 : 0;
+          {/* LISTADO */}
+          {institucionesFiltradas.length === 0 ? (
+            <div className="relative z-10 bg-white p-12 rounded-2xl text-center border border-slate-200 shadow-md">
+              <Search size={44} className="mx-auto mb-3 text-slate-300" />
+              <p className="text-lg font-bold text-slate-800">No se encontraron resultados</p>
+              <p className="text-slate-500 text-sm mt-1">No hay instituciones que coincidan con los filtros aplicados.</p>
+              <button onClick={limpiar} className="mt-5 text-brand-600 font-bold bg-brand-50 border border-brand-100 hover:bg-brand-100 px-5 py-2.5 rounded-xl text-sm transition-all active:scale-95">Limpiar filtros</button>
+            </div>
+          ) : (
+            <div className="relative z-10 grid grid-cols-1 xl:grid-cols-2 gap-5">
+              {currentItems.map((inst, indice) => {
+                const { asignadas, consumidas, restantes, pct } = datosUso(inst);
+                const libre = sinSeguimiento(inst);
+                const nivel = libre ? NIVEL_SIN_SEGUIMIENTO : nivelDeConsumo(pct);
+                const IconoNivel = nivel.icono;
+                const meses = Object.entries(inst.consumoPorMes || {}).sort(([a], [b]) => a.localeCompare(b));
+                const abierto = !!expandidas[inst.id];
 
-              // Determinar colores de estado visual
-              let estadoTexto = 'Saludable';
-              let estadoColor = 'bg-emerald-100 text-emerald-800 border-emerald-200';
-              let iconoEstado = <TrendingUp className="text-emerald-600" size={20} />;
-              let estadoCardBg = 'bg-emerald-50/60 border-emerald-100/80';
-              let estadoCardText = 'text-emerald-850';
-              
-              if (porcentajeUso > 90) {
-                estadoTexto = 'Crítico';
-                estadoColor = 'bg-red-100 text-red-800 border-red-200';
-                iconoEstado = <AlertCircle className="text-red-655" size={20} />;
-                estadoCardBg = 'bg-red-50/60 border-red-100/80';
-                estadoCardText = 'text-red-850';
-              } else if (porcentajeUso > 70) {
-                estadoTexto = 'Atención';
-                estadoColor = 'bg-amber-100 text-amber-800 border-amber-200';
-                iconoEstado = <AlertCircle className="text-amber-600" size={20} />;
-                estadoCardBg = 'bg-amber-50/60 border-amber-100/80';
-                estadoCardText = 'text-amber-850';
-              }
-
-              return (
-                <div key={inst.id} className="bg-white p-6 md:p-8 rounded-2xl shadow-lg shadow-slate-200/40 border border-slate-200 hover:border-brand-500/30 transition-all duration-300 relative overflow-hidden group">
-                  
-                  {/* Header de la Institución */}
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 pb-6 border-b border-slate-100">
-                    <div>
-                      <h2 className="text-2xl font-extrabold text-slate-800 flex items-center tracking-tight">
-                        {nombre}
-                        {porcentajeUso > 90 && (
-                          <AlertCircle className="ml-3 text-red-500 animate-pulse" size={24} title="Consultas críticas" />
-                        )}
-                      </h2>
-                      <div className="flex flex-wrap items-center mt-2 text-sm text-slate-500 font-medium">
-                        <span className="bg-slate-100 px-2 py-1 rounded text-slate-600 mr-3">
-                          Vence: {contrato?.fechaFin || 'N/A'}
+                return (
+                  <motion.article
+                    key={inst.id}
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(indice, 8) * 0.04, duration: 0.35 }}
+                    className={`rounded-2xl border border-slate-200/80 hover:border-brand-500/30 hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col ${libre ? 'bg-slate-50' : 'bg-white'}`}
+                  >
+                    <div className={`h-1.5 w-full bg-gradient-to-r ${nivel.barra}`} />
+                    <div className="p-5 flex flex-col flex-1">
+                      <div className="flex items-start justify-between gap-3 mb-4">
+                        <div className="flex items-start min-w-0">
+                          <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${gradienteCategoria(inst.categoria)} text-white text-base font-black flex items-center justify-center mr-3 flex-shrink-0 shadow-md`}>
+                            {iniciales(inst.nombre)}
+                          </div>
+                          <div className="min-w-0">
+                            <h2 className="text-base font-extrabold text-slate-800 uppercase tracking-tight leading-tight">{inst.nombre}</h2>
+                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                              <span className="px-2 py-0.5 rounded-full text-xs font-bold border bg-slate-100 text-slate-700 border-slate-200">{inst.categoria || 'Sin Categoría'}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${estiloEstado(inst.estado)}`}>{textoEstado(inst.estado)}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${nivel.badge}`}>
+                          <IconoNivel size={14} className="mr-1.5" /> {nivel.texto}
                         </span>
+                      </div>
+
+                      <div className="flex items-center gap-5 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-4">
+                        <MedidorUso porcentaje={Math.min(pct, 100)} color={libre ? '#94a3b8' : undefined} />
+                        <div className="grid grid-cols-3 gap-3 text-center flex-1">
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Asignadas</p>
+                            <p className="text-xl font-black text-blue-600">{asignadas.toLocaleString()}</p>
+                          </div>
+                          <div className="border-l border-slate-200">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Consumidas</p>
+                            <p className="text-xl font-black text-slate-800">{consumidas.toLocaleString()}</p>
+                          </div>
+                          <div className="border-l border-slate-200">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Disponibles</p>
+                            <p className="text-xl font-black text-emerald-600">{restantes.toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                          <Calendar size={12} className="mr-1" /> Vence: {formatearFecha(inst.contrato?.fechaFin)}
+                        </span>
+                        {inst.estado !== 'vencido' && !libre && <ChipVigencia dias={diasParaVencer(inst)} fechaFin={inst.contrato?.fechaFin} />}
                         {inst.contrato?.duracionMeses && (
-                          <span className="flex items-center text-slate-400">
-                            • <Clock size={14} className="mx-1" /> {inst.contrato.duracionMeses} meses
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                            <Clock size={12} className="mr-1" /> {inst.contrato.duracionMeses} meses
                           </span>
                         )}
                       </div>
-                    </div>
-                    <div className="mt-4 sm:mt-0">
-                      <span className={`inline-flex items-center px-4 py-1.5 rounded-full text-sm font-bold border ${estadoColor}`}>
-                        <span className="mr-2">{iconoEstado}</span>
-                        {estadoTexto}
-                      </span>
-                    </div>
-                  </div>
 
-                  {/* 4 Tarjetas de Estadísticas Principales */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                    
-                    {/* Disponibles (Verde/Seguro) */}
-                    <div className="bg-emerald-50/60 p-5 rounded-xl border border-emerald-100/80 hover:bg-emerald-50 transition-all duration-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">Disponibles</p>
-                          <p className="text-3xl font-black text-emerald-800 leading-none">{restantes.toLocaleString()}</p>
-                          <p className="text-xs text-emerald-500/80 font-medium mt-1.5">de {asignadas.toLocaleString()}</p>
-                        </div>
-                        <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
-                          <TrendingUp size={20} />
-                        </div>
-                      </div>
-                    </div>
+                      {libre && (
+                        <p className="mt-3 flex items-start text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                          <EyeOff size={14} className="mr-2 mt-0.5 flex-shrink-0 text-slate-400" />
+                          Migró a un plan con el consumo liberado: ya no se le da seguimiento mensual, aunque su contrato siga activo.
+                        </p>
+                      )}
 
-                    {/* Consumo (Naranja) */}
-                    <div className="bg-brand-50/60 p-5 rounded-xl border border-brand-100/80 hover:bg-brand-50 transition-all duration-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-brand-600 font-bold uppercase tracking-wider mb-1">Consumo</p>
-                          <p className="text-3xl font-black text-brand-800 leading-none">{porcentajeUso.toFixed(1)}%</p>
-                          <p className="text-xs text-brand-500/80 font-medium mt-1.5">{consumidas.toLocaleString()} usadas</p>
-                        </div>
-                        <div className="w-10 h-10 bg-brand-100 text-brand-600 rounded-full flex items-center justify-center">
-                          <span className="text-xs font-black">{Math.round(porcentajeUso)}%</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Total Asignadas (Gris) */}
-                    <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 hover:bg-slate-100 transition-all duration-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Asignadas</p>
-                          <p className="text-3xl font-black text-slate-800 leading-none">{asignadas.toLocaleString()}</p>
-                          <p className="text-xs text-slate-500 font-medium mt-1.5">consultas totales</p>
-                        </div>
-                        <div className="w-10 h-10 bg-slate-200 text-slate-655 rounded-full flex items-center justify-center">
-                          <BarChart2 size={20} />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Estado de Uso (Dinámico) */}
-                    <div className={`${estadoCardBg} p-5 rounded-xl border hover:opacity-90 transition-all duration-200`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${estadoColor.split(' ')[1]}`}>Estado</p>
-                          <p className={`text-2xl font-black leading-tight ${estadoCardText}`}>{estadoTexto}</p>
-                          <p className={`text-xs font-medium mt-1.5 opacity-80 ${estadoColor.split(' ')[1]}`}>
-                            {restantes.toLocaleString()} restantes
-                          </p>
-                        </div>
-                        <div className={`p-2.5 rounded-full bg-white/60 shadow-sm border border-slate-200`}>
-                          {iconoEstado}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Barra de progreso */}
-                  <div className="mb-8 bg-slate-50 p-5 rounded-xl border border-slate-200/60">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                        Progreso del Plan
-                      </span>
-                      <span className="text-xs font-bold text-slate-500 bg-white px-3 py-1 rounded shadow-sm border border-slate-200">
-                        {porcentajeUso.toFixed(1)}% consumido
-                      </span>
-                    </div>
-                    <ProgressBar value={consumidas} max={asignadas} />
-                  </div>
-
-                  {/* GRILLA DE CONSUMO MENSUAL (REDISEÑADA LIGHT) */}
-                  {inst.consumoPorMes && Object.keys(inst.consumoPorMes).length > 0 && (
-                    <div className="pt-2">
-                      <h4 className="text-base font-bold text-slate-800 mb-4 flex items-center">
-                        <BarChart2 className="mr-2 text-brand-500" size={18} />
-                        Historial Mensual
-                      </h4>
-                      
-                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                        {Object.entries(inst.consumoPorMes)
-                          .sort(([a], [b]) => a.localeCompare(b))
-                          .map(([mes, consumo]) => (
-                          <div 
-                            key={mes} 
-                            className="bg-gradient-to-br from-white to-brand-50/20 p-4 rounded-xl border border-brand-100 shadow-sm hover:border-brand-500/20 hover:bg-white transition-all duration-200 cursor-default"
+                      {meses.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-slate-100">
+                          <button
+                            onClick={() => setExpandidas(prev => ({ ...prev, [inst.id]: !prev[inst.id] }))}
+                            className="w-full flex items-center justify-between text-xs font-bold text-slate-600 hover:text-brand-600 transition-colors"
                           >
-                            <div className="text-[10px] font-bold text-brand-850 mb-1 uppercase tracking-widest opacity-80">
-                              {new Date(mes + '-01T00:00:00').toLocaleDateString('es-ES', { year: 'numeric', month: 'short' })}
+                            <span className="inline-flex items-center uppercase tracking-widest"><BarChart2 size={14} className="mr-1.5 text-brand-500" /> Historial mensual ({meses.length})</span>
+                            <ChevronDown size={16} className={`transition-transform duration-200 ${abierto ? 'rotate-180' : ''}`} />
+                          </button>
+                          {abierto && (
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">
+                              {meses.map(([mes, consumo]) => (
+                                <div key={mes} className="bg-gradient-to-br from-white to-brand-50/30 p-3 rounded-xl border border-brand-100 text-center">
+                                  <div className="text-[10px] font-bold text-brand-800 uppercase tracking-widest opacity-80">
+                                    {new Date(mes + '-01T00:00:00').toLocaleDateString('es-ES', { year: '2-digit', month: 'short' })}
+                                  </div>
+                                  <div className="text-xl font-black text-brand-600 leading-none my-1.5">{consumo.toLocaleString()}</div>
+                                  <div className="text-[9px] font-bold text-brand-500 uppercase tracking-widest">Consultas</div>
+                                </div>
+                              ))}
                             </div>
-                            
-                            <div className="text-3xl font-black text-brand-600 drop-shadow-sm leading-none my-2">
-                              {consumo.toLocaleString()}
-                            </div>
-                            
-                            <div className="text-[9px] font-bold text-brand-500 uppercase tracking-widest">
-                              Consultas
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
+                          )}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  </motion.article>
+                );
+              })}
+            </div>
+          )}
 
-            {/* 🆕 COMPONENTE UI DE PAGINACIÓN */}
-            {totalPages > 1 && (
-              <div className="mt-8 pt-6 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0">
-                <div className="text-sm text-slate-500 font-medium">
-                  Mostrando {indexOfFirstItem + 1} a {Math.min(indexOfLastItem, institucionesFiltradas.length)} de {institucionesFiltradas.length} instituciones
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => paginate(currentPage - 1)}
-                    disabled={currentPage === 1}
-                    className="px-4 py-2 border border-slate-350 bg-white rounded-lg text-slate-655 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium text-sm shadow-sm"
-                  >
-                    Anterior
-                  </button>
-                  
-                  <div className="hidden sm:flex space-x-1">
-                    {[...Array(totalPages)].map((_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => paginate(i + 1)}
-                        className={`w-10 h-10 rounded-lg font-bold transition-all text-sm shadow-sm ${
-                          currentPage === i + 1 
-                            ? 'bg-brand-500 text-white shadow-lg border border-brand-500' 
-                            : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'
-                        }`}
-                      >
-                        {i + 1}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={() => paginate(currentPage + 1)}
-                    disabled={currentPage === totalPages}
-                    className="px-4 py-2 border border-slate-350 bg-white rounded-lg text-slate-655 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium text-sm shadow-sm"
-                  >
-                    Siguiente
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Info Footer */}
-            <div className="mt-8 bg-brand-50 p-5 rounded-xl border border-brand-100/80 flex items-start shadow-sm">
-              <div className="bg-brand-100 p-2 rounded-lg mr-4">
-                <BarChart2 className="text-brand-500" size={24} />
-              </div>
-              <div>
-                <p className="text-sm text-brand-850 font-medium">
-                  <strong>Versión V3:</strong> Los datos se actualizan de acuerdo a los datos de la intranet BICSA.
-                </p>
+          {/* PAGINACIÓN */}
+          {totalPages > 1 && (
+            <div className="relative z-10 mt-8 pt-4 flex flex-col sm:flex-row justify-between items-center gap-3 border-t border-slate-200">
+              <span className="text-sm font-medium text-slate-500">
+                Mostrando {indexOfFirstItem + 1} a {Math.min(indexOfFirstItem + ITEMS_POR_PAGINA, institucionesFiltradas.length)} de {institucionesFiltradas.length} instituciones
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => setCurrentPage(p => p - 1)} disabled={currentPage === 1} className="p-2 border border-slate-200 bg-white rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"><ChevronLeft size={16} /></button>
+                {paginasVisibles().map((p, i) => p === '…' ? (
+                  <span key={`e${i}`} className="px-2 text-slate-400">…</span>
+                ) : (
+                  <button key={p} onClick={() => setCurrentPage(p)} className={`min-w-[36px] h-9 rounded-lg text-sm font-bold shadow-sm transition-all ${p === currentPage ? 'bg-brand-500 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'}`}>{p}</button>
+                ))}
+                <button onClick={() => setCurrentPage(p => p + 1)} disabled={currentPage === totalPages} className="p-2 border border-slate-200 bg-white rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"><ChevronRight size={16} /></button>
               </div>
             </div>
-          </>
-        )}
-      </div>
+          )}
+
+          {/* Pie informativo */}
+          <div className="relative z-10 mt-8 bg-brand-50 p-5 rounded-xl border border-brand-100/80 flex items-start shadow-sm">
+            <div className="bg-brand-100 p-2 rounded-lg mr-4">
+              <BarChart2 className="text-brand-500" size={24} />
+            </div>
+            <p className="text-sm text-brand-800 font-medium">
+              <strong>Versión V{APP_VERSION}:</strong> Los datos se actualizan de acuerdo a los datos de la intranet BICSA.
+            </p>
+          </div>
+        </>
+      )}
     </div>
   );
 };

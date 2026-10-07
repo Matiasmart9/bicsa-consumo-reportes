@@ -4,7 +4,7 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyDNxH0SFv-tkC-VcMopvvQjwFGjs41zXGQ",
   authDomain: "bicsa-consumo-reportes.firebaseapp.com",
   projectId: "bicsa-consumo-reportes",
