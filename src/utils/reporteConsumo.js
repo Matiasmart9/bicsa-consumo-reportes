@@ -16,12 +16,7 @@ const resumenContrato = (inst) => {
 // Filas de la hoja "Monitoreo Contratos" (se usa en el reporte de consumo y en el Excel propio de Monitoreo)
 const filasMonitoreo = (instituciones, fecha) => {
   const monitoreados = obtenerContratosPorVencer(instituciones);
-  // Crítico: 15 días o menos. Medio: de 16 días hasta 1 mes. Próximo: hasta 2 meses.
-  const situacionDe = (c) => {
-    if (c.tipo === 'vencido') return 'Vencido';
-    if (c.tipo === 'advertencia') return 'Próximo';
-    return c.dias <= 15 ? 'Crítico' : 'Medio';
-  };
+  const etiquetaSituacion = { vencido: 'Vencido', critico: 'Crítico', medio: 'Medio', advertencia: 'Próximo' };
   const monitoreo = [
     ['MONITOREO DE CONTRATOS - VENCIMIENTOS'],
     [''],
@@ -29,8 +24,8 @@ const filasMonitoreo = (instituciones, fecha) => {
     [''],
     ['=== RESUMEN ==='],
     ['Contratos Vencidos:', monitoreados.filter(c => c.tipo === 'vencido').length],
-    ['Contratos Críticos (15 días o menos):', monitoreados.filter(c => situacionDe(c) === 'Crítico').length],
-    ['Contratos Medios (de 16 días hasta 1 mes):', monitoreados.filter(c => situacionDe(c) === 'Medio').length],
+    ['Contratos Críticos (15 días o menos):', monitoreados.filter(c => c.tipo === 'critico').length],
+    ['Contratos Medios (de 16 días hasta 1 mes):', monitoreados.filter(c => c.tipo === 'medio').length],
     ['Contratos Próximos a Vencer (2 meses):', monitoreados.filter(c => c.tipo === 'advertencia').length],
     [''],
     ['=== DETALLE DE CONTRATOS ==='],
@@ -41,7 +36,7 @@ const filasMonitoreo = (instituciones, fecha) => {
       c.nombre,
       c.categoria,
       formatearFecha(c.fecha),
-      situacionDe(c),
+      etiquetaSituacion[c.tipo],
       describirVigencia(c.fecha),
       c.progreso !== null ? `${Math.round(c.progreso)}%` : 'N/A'
     ]);

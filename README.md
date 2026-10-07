@@ -11,7 +11,7 @@ Aplicación web para el **seguimiento del consumo y de los contratos** de las in
 | **Dashboard** | Resumen general del consumo con gráficos (estado, mayor consumo y consumo mensual), filtros rápidos por estado, orden y tarjetas por institución con historial mensual desplegable. |
 | **Instituciones** | Alta, edición, renovación y baja. Vista de tarjetas o lista, filtros (estado, categoría, alto consumo), orden y exportación a Excel. |
 | **Registro de consumo** | Consumo mensual por institución con vista previa del uso del contrato y validación contra las consultas disponibles. |
-| **Monitoreo Contratos** | Contratos vencidos, críticos (hasta 1 mes) y próximos a vencer (2 meses), con buscador y filtros. |
+| **Monitoreo Contratos** | Contratos vencidos, críticos (15 días o menos), medios (de 16 días a 1 mes) y próximos a vencer (hasta 2 meses), con buscador, filtros y Excel. |
 | **Notificaciones** | Campanita en la barra superior con contratos vencidos o por vencer y consumo alto (75 %) o crítico (90 %). Cada usuario marca las suyas como leídas: no afecta a los demás. |
 | **Auditoría** | Registro general de acciones (quién, qué y cuándo) con filtros y exportación a Excel. Se habilita por usuario. |
 | **Cargas XML** | Seguimiento de las instituciones que cargan XML. |

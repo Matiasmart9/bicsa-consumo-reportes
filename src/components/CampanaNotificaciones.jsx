@@ -2,7 +2,7 @@
 // Campanita de la barra superior. Cada usuario marca sus propias notificaciones como leídas.
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertOctagon, AlertTriangle, Bell, BellOff, CheckCheck, Flame, Gauge } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, Bell, BellOff, CheckCheck, Flame, Gauge, Hourglass } from 'lucide-react';
 import { useNotificaciones } from '../hooks/useNotificaciones';
 
 // En la pestaña "Leídas" se muestran como máximo las últimas de este número
@@ -11,6 +11,7 @@ const MAX_LEIDAS_VISIBLES = 20;
 const ESTILO = {
   vencido: { icono: AlertOctagon, caja: 'bg-red-100 text-red-600' },
   critico: { icono: AlertTriangle, caja: 'bg-orange-100 text-orange-600' },
+  medio: { icono: Hourglass, caja: 'bg-yellow-100 text-yellow-700' },
   consumo_critico: { icono: Flame, caja: 'bg-red-100 text-red-600' },
   consumo_alto: { icono: Gauge, caja: 'bg-amber-100 text-amber-600' }
 };

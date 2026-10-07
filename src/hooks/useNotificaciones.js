@@ -17,7 +17,7 @@ export const UMBRAL_CONSUMO_CRITICO = 90;
 // Las claves se guardan como campos de un mapa de Firestore: solo letras, números, guion y guion bajo
 const limpiarClave = (texto) => String(texto).replace(/[^A-Za-z0-9_-]/g, '_');
 
-const ORDEN_SEVERIDAD = { vencido: 0, critico: 1, consumo_critico: 2, advertencia: 3, consumo_alto: 4 };
+const ORDEN_SEVERIDAD = { vencido: 0, critico: 1, consumo_critico: 2, medio: 3, advertencia: 4, consumo_alto: 5 };
 
 export const useNotificaciones = ({ rol, permisos }) => {
   const { instituciones } = useInstituciones();
@@ -49,12 +49,12 @@ export const useNotificaciones = ({ rol, permisos }) => {
 
     if (puedeVerMonitoreo(rol, permisos)) {
       obtenerContratosPorVencer(instituciones)
-        .filter(c => c.tipo === 'vencido' || c.tipo === 'critico')
+        .filter(c => c.tipo === 'vencido' || c.tipo === 'critico' || c.tipo === 'medio')
         .forEach(c => {
           lista.push({
             clave: limpiarClave(`c_${c.id}_${c.fecha}_${c.tipo}`),
             tipo: c.tipo,
-            titulo: c.tipo === 'vencido' ? 'Contrato vencido' : 'Contrato por vencer',
+            titulo: c.tipo === 'vencido' ? 'Contrato vencido' : c.tipo === 'critico' ? 'Contrato crítico' : 'Contrato por vencer',
             institucion: c.nombre,
             detalle: c.tipo === 'vencido'
               ? `Venció el ${c.fecha} (${Math.abs(c.dias)} ${Math.abs(c.dias) === 1 ? 'día' : 'días'})`

@@ -16,7 +16,8 @@ export const mesesHasta = (desde, hasta) => {
   return Math.max(0, meses);
 };
 
-// tipo: 'vencido' (ya pasó la fecha) | 'critico' (<= 1 mes) | 'advertencia' (<= 2 meses)
+// tipo: 'vencido' (ya pasó la fecha) | 'critico' (15 días o menos) | 'medio' (de 16 días hasta 1 mes)
+//       | 'advertencia' (hasta 2 meses)
 export const obtenerContratosPorVencer = (instituciones) => {
   const hoy = new Date();
   const items = [];
@@ -47,7 +48,7 @@ export const obtenerContratosPorVencer = (instituciones) => {
       meses,
       dias,
       progreso,
-      tipo: dias < 0 ? 'vencido' : meses <= 1 ? 'critico' : 'advertencia'
+      tipo: dias < 0 ? 'vencido' : meses <= 1 ? (dias <= 15 ? 'critico' : 'medio') : 'advertencia'
     });
   });
 

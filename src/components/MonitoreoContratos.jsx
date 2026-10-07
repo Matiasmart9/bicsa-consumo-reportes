@@ -16,7 +16,8 @@ import {
   Tag,
   Layers,
   Lock,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Hourglass
 } from 'lucide-react';
 import { useInstituciones } from '../hooks/useFirebase';
 import { obtenerContratosPorVencer } from '../utils/contratos';
@@ -47,6 +48,16 @@ const ESTILOS = {
     barra: 'bg-orange-500',
     texto: 'text-orange-700'
   },
+  medio: {
+    titulo: 'Contrato medio',
+    icono: Hourglass,
+    borde: 'border-l-yellow-400',
+    fondo: 'bg-yellow-50/70 border-yellow-200',
+    iconoBox: 'bg-yellow-100 text-yellow-700',
+    pill: 'bg-yellow-100 text-yellow-800',
+    barra: 'bg-yellow-400',
+    texto: 'text-yellow-700'
+  },
   advertencia: {
     titulo: 'Vencimiento próximo',
     icono: Clock,
@@ -68,7 +79,7 @@ const textoTiempo = (n) => {
   return n.meses === 1 ? '1 mes restante' : `${n.meses} meses restantes`;
 };
 
-const TarjetaResumen = ({ icono: Icono, etiqueta, valor, color, activa, onClick }) => (
+const TarjetaResumen = ({ icono: Icono, etiqueta, valor, detalle, color, activa, onClick }) => (
   <button
     type="button"
     onClick={onClick}
@@ -83,6 +94,7 @@ const TarjetaResumen = ({ icono: Icono, etiqueta, valor, color, activa, onClick 
       </span>
     </div>
     <p className="mt-3 text-4xl font-extrabold text-slate-800 text-center">{valor}</p>
+    {detalle && <p className="mt-1 text-[11px] font-semibold text-slate-400 text-center">{detalle}</p>}
   </button>
 );
 
@@ -119,6 +131,7 @@ const MonitoreoContratos = ({ userRole }) => {
   const conteo = useMemo(() => ({
     vencido: contratos.filter(c => c.tipo === 'vencido').length,
     critico: contratos.filter(c => c.tipo === 'critico').length,
+    medio: contratos.filter(c => c.tipo === 'medio').length,
     advertencia: contratos.filter(c => c.tipo === 'advertencia').length
   }), [contratos]);
 
@@ -211,11 +224,12 @@ const MonitoreoContratos = ({ userRole }) => {
       </header>
 
       {/* Resumen / filtros */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <TarjetaResumen icono={Layers} etiqueta="En seguimiento" valor={contratos.length} color="bg-slate-100 text-slate-600" activa={filtro === 'todos'} onClick={() => setFiltro('todos')} />
-        <TarjetaResumen icono={AlertOctagon} etiqueta="Vencidos" valor={conteo.vencido} color="bg-red-100 text-red-600" activa={filtro === 'vencido'} onClick={() => alternarFiltro('vencido')} />
-        <TarjetaResumen icono={AlertTriangle} etiqueta="Críticos" valor={conteo.critico} color="bg-orange-100 text-orange-600" activa={filtro === 'critico'} onClick={() => alternarFiltro('critico')} />
-        <TarjetaResumen icono={Clock} etiqueta="Próximos" valor={conteo.advertencia} color="bg-amber-100 text-amber-600" activa={filtro === 'advertencia'} onClick={() => alternarFiltro('advertencia')} />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <TarjetaResumen icono={Layers} etiqueta="En seguimiento" valor={contratos.length} detalle="vencidos y por vencer" color="bg-slate-100 text-slate-600" activa={filtro === 'todos'} onClick={() => setFiltro('todos')} />
+        <TarjetaResumen icono={AlertOctagon} etiqueta="Vencidos" valor={conteo.vencido} detalle="ya pasó la fecha" color="bg-red-100 text-red-600" activa={filtro === 'vencido'} onClick={() => alternarFiltro('vencido')} />
+        <TarjetaResumen icono={AlertTriangle} etiqueta="Críticos" valor={conteo.critico} detalle="15 días o menos" color="bg-orange-100 text-orange-600" activa={filtro === 'critico'} onClick={() => alternarFiltro('critico')} />
+        <TarjetaResumen icono={Hourglass} etiqueta="Medios" valor={conteo.medio} detalle="de 16 días a 1 mes" color="bg-yellow-100 text-yellow-700" activa={filtro === 'medio'} onClick={() => alternarFiltro('medio')} />
+        <TarjetaResumen icono={Clock} etiqueta="Próximos" valor={conteo.advertencia} detalle="hasta 2 meses" color="bg-amber-100 text-amber-600" activa={filtro === 'advertencia'} onClick={() => alternarFiltro('advertencia')} />
       </div>
 
       {/* Buscador */}
@@ -298,7 +312,7 @@ const MonitoreoContratos = ({ userRole }) => {
                         <PhoneCall size={14} className="mr-2" />
                         {n.tipo === 'vencido'
                           ? 'Contactar para regularizar o renovar el contrato.'
-                          : n.dias <= 15
+                          : n.tipo === 'critico'
                             ? 'Contactar con la institución para la renovación.'
                             : 'Mantener al tanto a la institución que está por vencer.'}
                       </div>
