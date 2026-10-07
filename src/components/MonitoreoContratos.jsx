@@ -15,10 +15,13 @@ import {
   CheckCircle2,
   Tag,
   Layers,
-  Lock
+  Lock,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useInstituciones } from '../hooks/useFirebase';
 import { obtenerContratosPorVencer } from '../utils/contratos';
+import { generarReporteMonitoreoExcel } from '../utils/reporteConsumo';
+import { sileo } from './sileo';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -124,6 +127,16 @@ const MonitoreoContratos = ({ userRole }) => {
     c.nombre.toLowerCase().includes(busqueda.toLowerCase())
   );
 
+  const descargarExcel = () => {
+    try {
+      const nombre = generarReporteMonitoreoExcel(instituciones);
+      sileo.success({ title: 'Reporte generado', description: `Se descargó ${nombre}` });
+    } catch (e) {
+      console.error('Error al generar el Excel de monitoreo:', e);
+      sileo.error({ title: 'Error al exportar', description: 'No se pudo generar el archivo Excel.' });
+    }
+  };
+
   const alternarFiltro = (tipo) => setFiltro(prev => (prev === tipo ? 'todos' : tipo));
 
   if (acceso === false) {
@@ -181,9 +194,19 @@ const MonitoreoContratos = ({ userRole }) => {
             <p className="text-slate-500 font-medium">Seguimiento de vencimientos de instituciones</p>
           </div>
         </div>
-        <div className="px-4 py-2 bg-white rounded-xl border border-slate-200 text-sm font-semibold text-slate-500 shadow-sm inline-flex items-center self-start sm:self-auto">
-          <CalendarClock size={16} className="mr-2 text-brand-500" />
-          Actualizado: <span className="text-slate-800 ml-1">{new Date().toLocaleString('es-ES')}</span>
+        <div className="flex items-center gap-3 self-start sm:self-auto">
+          <div className="px-4 py-2 bg-white rounded-xl border border-slate-200 text-sm font-semibold text-slate-500 shadow-sm inline-flex items-center">
+            <CalendarClock size={16} className="mr-2 text-brand-500" />
+            Actualizado: <span className="text-slate-800 ml-1">{new Date().toLocaleString('es-ES')}</span>
+          </div>
+          <button
+            onClick={descargarExcel}
+            disabled={contratos.length === 0}
+            className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center shadow-lg shadow-emerald-600/10 hover:bg-emerald-700 transition-all active:scale-95 disabled:opacity-50"
+            title="Descargar el detalle de contratos vencidos y por vencer"
+          >
+            <FileSpreadsheet size={18} className="mr-2" /> Excel
+          </button>
         </div>
       </header>
 

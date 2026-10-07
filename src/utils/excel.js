@@ -24,7 +24,8 @@ const SEMAFORO = {
   rojo: { fill: 'FEE2E2', font: '991B1B' },
   naranja: { fill: 'FFEDD5', font: '9A3412' },
   azul: { fill: 'DBEAFE', font: '1E40AF' },
-  gris: { fill: 'E2E8F0', font: '475569' }
+  gris: { fill: 'E2E8F0', font: '475569' },
+  amarillo: { fill: 'FEF9C3', font: '854D0E' }
 };
 
 const semaforoDeTexto = (texto) => {
@@ -33,6 +34,7 @@ const semaforoDeTexto = (texto) => {
   if (t === 'pendiente' || t === 'uso óptimo' || t === 'próximo' || t === 'renovacion') return SEMAFORO.ambar;
   if (t === 'vencido' || t === 'no renov.' || t === 'finalizada' || t === 'no_renovada' || t === 'uso crítico' || t.includes('contrato vencido')) return SEMAFORO.rojo;
   if (t === 'crítico') return SEMAFORO.naranja;
+  if (t === 'medio') return SEMAFORO.amarillo;
   if (t === 'bajo uso') return SEMAFORO.azul;
   if (t === 'no') return SEMAFORO.gris;
   return null;

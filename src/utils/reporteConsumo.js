@@ -13,6 +13,53 @@ const resumenContrato = (inst) => {
   return { asignadas, consumidas, restantes: asignadas - consumidas };
 };
 
+// Filas de la hoja "Monitoreo Contratos" (se usa en el reporte de consumo y en el Excel propio de Monitoreo)
+const filasMonitoreo = (instituciones, fecha) => {
+  const monitoreados = obtenerContratosPorVencer(instituciones);
+  // Crítico: 15 días o menos. Medio: de 16 días hasta 1 mes. Próximo: hasta 2 meses.
+  const situacionDe = (c) => {
+    if (c.tipo === 'vencido') return 'Vencido';
+    if (c.tipo === 'advertencia') return 'Próximo';
+    return c.dias <= 15 ? 'Crítico' : 'Medio';
+  };
+  const monitoreo = [
+    ['MONITOREO DE CONTRATOS - VENCIMIENTOS'],
+    [''],
+    ['Fecha de Generación:', fecha],
+    [''],
+    ['=== RESUMEN ==='],
+    ['Contratos Vencidos:', monitoreados.filter(c => c.tipo === 'vencido').length],
+    ['Contratos Críticos (15 días o menos):', monitoreados.filter(c => situacionDe(c) === 'Crítico').length],
+    ['Contratos Medios (de 16 días hasta 1 mes):', monitoreados.filter(c => situacionDe(c) === 'Medio').length],
+    ['Contratos Próximos a Vencer (2 meses):', monitoreados.filter(c => c.tipo === 'advertencia').length],
+    [''],
+    ['=== DETALLE DE CONTRATOS ==='],
+    ['Institución', 'Plan / Categoría', 'Fecha Vencimiento', 'Situación', 'Tiempo', 'Avance del Contrato']
+  ];
+  monitoreados.forEach((c) => {
+    monitoreo.push([
+      c.nombre,
+      c.categoria,
+      formatearFecha(c.fecha),
+      situacionDe(c),
+      describirVigencia(c.fecha),
+      c.progreso !== null ? `${Math.round(c.progreso)}%` : 'N/A'
+    ]);
+  });
+  return monitoreo;
+};
+
+// Excel solo con la hoja de Monitoreo Contratos
+export const generarReporteMonitoreoExcel = (instituciones) => {
+  const fecha = new Date().toLocaleDateString('es-ES');
+  const nombreArchivo = `Monitoreo_Contratos_${new Date().toISOString().split('T')[0]}.xlsx`;
+  descargarLibro(
+    [{ nombre: 'Monitoreo Contratos', hoja: hojaDesdeFilas(filasMonitoreo(instituciones, fecha)) }],
+    nombreArchivo
+  );
+  return nombreArchivo;
+};
+
 export const generarReporteConsumoExcel = (instituciones) => {
   const ahora = new Date();
   const fecha = ahora.toLocaleDateString('es-ES');
@@ -39,9 +86,6 @@ export const generarReporteConsumoExcel = (instituciones) => {
     ['Instituciones Pendientes:', pendientes],
     ['Instituciones Vencidas (No Renovadas):', vencidas],
     ['Instituciones con Historial (Renovaciones):', conHistorial],
-    ['Total Consultas Asignadas:', totalAsignadas],
-    ['Total Consultas Consumidas:', totalConsumidas],
-    ['Total Consultas Restantes:', totalAsignadas - totalConsumidas],
     ['Promedio de Uso General (%):', porcentaje(totalConsumidas, totalAsignadas)],
     [''],
     ['=== CONSUMO DETALLADO POR INSTITUCIÓN ==='],
@@ -131,31 +175,7 @@ export const generarReporteConsumoExcel = (instituciones) => {
   });
 
   // === HOJA 3: MONITOREO DE CONTRATOS ===
-  const monitoreados = obtenerContratosPorVencer(instituciones);
-  const etiquetaSituacion = { vencido: 'Vencido', critico: 'Crítico', advertencia: 'Próximo' };
-  const monitoreo = [
-    ['MONITOREO DE CONTRATOS - VENCIMIENTOS'],
-    [''],
-    ['Fecha de Generación:', fecha],
-    [''],
-    ['=== RESUMEN ==='],
-    ['Contratos Vencidos:', monitoreados.filter(c => c.tipo === 'vencido').length],
-    ['Contratos Críticos (hasta 1 mes):', monitoreados.filter(c => c.tipo === 'critico').length],
-    ['Contratos Próximos a Vencer (2 meses):', monitoreados.filter(c => c.tipo === 'advertencia').length],
-    [''],
-    ['=== DETALLE DE CONTRATOS ==='],
-    ['Institución', 'Plan / Categoría', 'Fecha Vencimiento', 'Situación', 'Tiempo', 'Avance del Contrato']
-  ];
-  monitoreados.forEach((c) => {
-    monitoreo.push([
-      c.nombre,
-      c.categoria,
-      formatearFecha(c.fecha),
-      etiquetaSituacion[c.tipo],
-      describirVigencia(c.fecha),
-      c.progreso !== null ? `${Math.round(c.progreso)}%` : 'N/A'
-    ]);
-  });
+  const monitoreo = filasMonitoreo(instituciones, fecha);
 
   // === HOJA 4: CONSUMO MENSUAL ===
   const consumoMensual = [

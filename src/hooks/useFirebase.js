@@ -345,6 +345,7 @@ export const useUsuarios = () => {
             uid: data.uid || doc.id,
             ...data,
             fechaCreacion: data.fechaCreacion?.toDate?.()?.toLocaleDateString('es-ES') || 'N/A',
+            ultimoAccesoISO: data.ultimoAcceso || null,
             ultimoAcceso: data.ultimoAcceso ? new Date(data.ultimoAcceso).toLocaleString('es-ES') : 'Nunca'
           });
         });

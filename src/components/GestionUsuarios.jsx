@@ -1,12 +1,14 @@
 // src/components/GestionUsuarios.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { sileo } from './sileo';
 import { confirmar } from '../utils/confirmar';
 import { 
   Users, UserPlus, X, Trash2, Shield, User,
-  CheckCircle, AlertCircle, Loader2, Calculator, Edit3, PieChart, ShieldAlert
+  CheckCircle, AlertCircle, Loader2, Calculator, Edit3, PieChart, ShieldAlert,
+  Search, Info, Clock, Globe, CalendarClock, RotateCcw, KeyRound
 } from 'lucide-react';
 import { useUsuarios } from '../hooks/useFirebase';
+import { formatearFechaHora } from '../utils/excel';
 
 const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
   const isEdit = !!usuarioAEditar;
@@ -170,9 +172,9 @@ const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
             <div className={isEdit ? "md:col-span-2" : ""}>
               <label className="block text-sm font-medium text-gray-700 mb-1">Perfil Base</label>
               <select value={tipoPerfil} onChange={handlePerfilChange} className="w-full p-2.5 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 outline-none" disabled={saving}>
-                <option value="usuario">👤 Operador (Instituciones)</option>
-                <option value="contabilidad">📊 Contabilidad</option>
-                <option value="admin">🛡️ Administrador (Acceso Total)</option>
+                <option value="usuario">Operador (Instituciones)</option>
+                <option value="contabilidad">Contabilidad</option>
+                <option value="admin">Administrador (Acceso Total)</option>
               </select>
             </div>
             <div className="md:col-span-2">
@@ -267,9 +269,65 @@ const ModalUsuario = ({ usuarioAEditar, onClose, onSave, onEdit }) => {
   );
 };
 
+// ---------- Utilidades del listado ----------
+const hace = (iso) => {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms)) return null;
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} ${h === 1 ? 'hora' : 'horas'}`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `hace ${d} ${d === 1 ? 'día' : 'días'}`;
+  const m = Math.floor(d / 30);
+  if (m < 12) return `hace ${m} ${m === 1 ? 'mes' : 'meses'}`;
+  const a = Math.floor(d / 365);
+  return `hace ${a} ${a === 1 ? 'año' : 'años'}`;
+};
+
+// Verde: ingresó en el último día. Gris: en el último mes. Ámbar: hace más de un mes. Rojo suave: nunca.
+const frescura = (iso) => {
+  if (!iso) return { punto: 'bg-slate-300', texto: 'text-slate-400' };
+  const dias = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (dias <= 1) return { punto: 'bg-emerald-500', texto: 'text-emerald-700' };
+  if (dias <= 30) return { punto: 'bg-slate-400', texto: 'text-slate-600' };
+  return { punto: 'bg-amber-500', texto: 'text-amber-700' };
+};
+
+const ESTILO_ROL = {
+  admin: { texto: 'Admin', icono: Shield, avatar: 'bg-blue-100 text-blue-600', badge: 'bg-blue-100 text-blue-800 border-blue-200' },
+  contabilidad: { texto: 'Contabilidad', icono: Calculator, avatar: 'bg-purple-100 text-purple-600', badge: 'bg-purple-100 text-purple-800 border-purple-200' },
+  usuario: { texto: 'Operador', icono: User, avatar: 'bg-slate-100 text-slate-600', badge: 'bg-slate-100 text-slate-700 border-slate-200' }
+};
+const estiloRol = (rol) => ESTILO_ROL[rol] || ESTILO_ROL.usuario;
+
+const listarAccesos = (u) => {
+  if (u.rol === 'admin') return ['Acceso total'];
+  const p = u.permisos || {};
+  const i = p.instituciones || {};
+  const lista = [];
+  if (i.agregar) lista.push('Agregar instituciones');
+  if (i.editar) lista.push('Editar instituciones');
+  if (i.eliminar) lista.push('Eliminar instituciones');
+  if (i.registrarConsumo) lista.push('Registrar consumos');
+  if (i.comentar) lista.push('Comentarios');
+  if (i.verHistorial) lista.push('Ver historial');
+  if (p.contabilidad?.acceso) lista.push(`Facturación (${p.contabilidad.nivel === 'full' ? 'completo' : 'solo vista'})`);
+  if (p.contabilidad?.dashboardFacturacion) lista.push('Dashboard Facturación');
+  if (p.monitoreoContratos?.acceso !== false) lista.push('Monitoreo Contratos');
+  if (p.auditoria?.acceso ?? u.rol === 'contabilidad') lista.push('Auditoría');
+  return lista;
+};
+
 const GestionUsuarios = () => {
   const [showModal, setShowModal] = useState(false);
-  const [usuarioSeleccionado, setUsuarioSeleccionado] = useState(null); 
+  const [usuarioSeleccionado, setUsuarioSeleccionado] = useState(null);
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroRol, setFiltroRol] = useState('todos');
+  const [filtroEstado, setFiltroEstado] = useState('todos');
+  const [detalle, setDetalle] = useState({});
   const { usuarios, loading, error, agregarUsuario, eliminarUsuario, toggleUsuarioActivo, editarUsuario } = useUsuarios();
 
   const handleSave = async (nuevoUsuario) => {
@@ -301,59 +359,186 @@ const GestionUsuarios = () => {
     if (!resultado.success) sileo.error({ title: 'Error', description: resultado.error });
   };
 
-  if (loading && usuarios.length === 0) return <div className="p-10 flex justify-center"><Loader2 size={48} className="animate-spin text-blue-600" /></div>;
+  const nombreDe = (uid) => usuarios.find(u => u.uid === uid)?.nombre || null;
+
+  const filtrados = useMemo(() => {
+    const texto = busqueda.trim().toLowerCase();
+    return usuarios.filter(u => {
+      if (filtroRol !== 'todos' && u.rol !== filtroRol) return false;
+      if (filtroEstado === 'activo' && !u.activo) return false;
+      if (filtroEstado === 'inactivo' && u.activo) return false;
+      if (texto && !`${u.nombre} ${u.email} ${u.area || ''}`.toLowerCase().includes(texto)) return false;
+      return true;
+    });
+  }, [usuarios, busqueda, filtroRol, filtroEstado]);
+
+  const hayFiltros = busqueda || filtroRol !== 'todos' || filtroEstado !== 'todos';
+  const limpiar = () => { setBusqueda(''); setFiltroRol('todos'); setFiltroEstado('todos'); };
+  const totalActivos = usuarios.filter(u => u.activo).length;
+  const campoFiltro = 'w-full px-3 py-2.5 border border-slate-200 rounded-xl bg-white text-slate-700 outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 text-sm font-medium transition-all';
+
+  if (loading && usuarios.length === 0) return <div className="p-10 flex justify-center"><Loader2 size={48} className="animate-spin text-brand-500" /></div>;
+
+  if (error) return <div className="p-10 text-center text-red-700 font-medium">{error}</div>;
 
   return (
-    <div className="p-6 sm:p-10 bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center"><Users size={32} className="mr-3 text-blue-700"/> Gestión de Usuarios</h1>
+    <div className="p-4 sm:p-8 bg-slate-50 min-h-screen">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div className="flex items-center">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-400 text-white flex items-center justify-center shadow-lg shadow-brand-500/20 mr-4">
+            <Users size={28} />
+          </div>
+          <div>
+            <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Gestión de Usuarios</h1>
+            <p className="text-slate-500 font-medium">{usuarios.length} usuarios · {totalActivos} activos · {usuarios.length - totalActivos} inactivos</p>
+          </div>
         </div>
-        <button onClick={() => { setUsuarioSeleccionado(null); setShowModal(true); }} className="bg-blue-600 text-white px-5 py-3 rounded-lg font-semibold flex items-center hover:bg-blue-700 shadow-sm">
-          <UserPlus size={20} className="mr-2"/> Nuevo Usuario
+        <button onClick={() => { setUsuarioSeleccionado(null); setShowModal(true); }} className="self-start sm:self-auto bg-brand-500 text-white px-5 py-3 rounded-xl font-bold flex items-center hover:bg-brand-600 shadow-lg shadow-brand-500/20 transition-all active:scale-95">
+          <UserPlus size={20} className="mr-2" /> Nuevo Usuario
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+      {/* Filtros */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-brand-500" size={18} />
+            <input type="text" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por nombre, correo o área..." className="w-full pl-10 pr-9 py-2.5 border-2 border-brand-200 rounded-xl bg-white text-slate-800 placeholder-slate-500 font-medium outline-none shadow-sm focus:ring-4 focus:ring-brand-500/15 focus:border-brand-500 text-sm transition-all" />
+            {busqueda && <button onClick={() => setBusqueda('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X size={16} /></button>}
+          </div>
+          <select value={filtroRol} onChange={(e) => setFiltroRol(e.target.value)} className={campoFiltro}>
+            <option value="todos">Todos los roles</option>
+            <option value="admin">Admin</option>
+            <option value="contabilidad">Contabilidad</option>
+            <option value="usuario">Operador</option>
+          </select>
+          <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)} className={campoFiltro}>
+            <option value="todos">Todos los estados</option>
+            <option value="activo">Activos</option>
+            <option value="inactivo">Inactivos</option>
+          </select>
+        </div>
+        {hayFiltros && (
+          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500">{filtrados.length} de {usuarios.length} usuarios</span>
+            <button onClick={limpiar} className="inline-flex items-center text-xs font-bold text-brand-600 hover:text-brand-700"><RotateCcw size={13} className="mr-1" /> Limpiar filtros</button>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table className="w-full text-left border-collapse min-w-[980px]">
+          <thead className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-200">
             <tr>
-              <th className="px-6 py-4">Usuario</th>
-              <th className="px-6 py-4">Rol / Perfil</th>
-              <th className="px-6 py-4">Estado</th>
-              <th className="px-6 py-4 text-right">Acciones</th>
+              <th className="px-6 py-3">Usuario</th>
+              <th className="px-4 py-3">Rol / Perfil</th>
+              <th className="px-4 py-3">Estado</th>
+              <th className="px-4 py-3">Último inicio de sesión</th>
+              <th className="px-6 py-3 text-right">Acciones</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200">
-            {usuarios.map((usuario) => (
-              <tr key={usuario.uid} className="hover:bg-gray-50">
-                <td className="px-6 py-4">
-                  <div className="flex items-center">
-                    <div className={`h-10 w-10 rounded-full flex items-center justify-center ${usuario.rol === 'admin' ? 'bg-blue-100' : usuario.rol === 'contabilidad' ? 'bg-purple-100' : 'bg-gray-100'}`}>
-                      {usuario.rol === 'admin' ? <Shield className="text-blue-600" size={20} /> : usuario.rol === 'contabilidad' ? <Calculator className="text-purple-600" size={20} /> : <User className="text-gray-600" size={20} />}
-                    </div>
-                    <div className="ml-4">
-                      <div className="text-sm font-bold text-gray-900">{usuario.nombre} <span className="ml-1 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded border border-gray-200">{usuario.area || 'Sin Dato área'}</span></div>
-                      <div className="text-sm text-gray-500">{usuario.email}</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${usuario.rol === 'admin' ? 'bg-blue-100 text-blue-800' : usuario.rol === 'contabilidad' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'}`}>
-                    {usuario.rol === 'admin' ? '🛡️ Admin' : usuario.rol === 'contabilidad' ? '📊 Contabilidad' : '👤 Operador'}
-                  </span>
-                </td>
-                <td className="px-6 py-4">
-                  <button onClick={() => handleToggleActivo(usuario.uid)} className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${usuario.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                    {usuario.activo ? <><CheckCircle size={14} className="mr-1" /> Activo</> : <><AlertCircle size={14} className="mr-1" /> Inactivo</>}
-                  </button>
-                </td>
-                <td className="px-6 py-4 text-right flex justify-end space-x-2">
-                  <button onClick={() => { setUsuarioSeleccionado(usuario); setShowModal(true); }} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-lg" title="Editar"><Edit3 size={18} /></button>
-                  <button onClick={() => handleDelete(usuario.uid, usuario.nombre)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-lg" title="Eliminar"><Trash2 size={18} /></button>
-                </td>
-              </tr>
-            ))}
+          <tbody className="divide-y divide-slate-100">
+            {filtrados.length === 0 ? (
+              <tr><td colSpan="5" className="text-center py-12 text-slate-400 font-medium">No hay usuarios que coincidan con los filtros.</td></tr>
+            ) : filtrados.map((usuario) => {
+              const rol = estiloRol(usuario.rol);
+              const IconoRol = rol.icono;
+              const f = frescura(usuario.ultimoAccesoISO);
+              const abierto = !!detalle[usuario.uid];
+              const accesos = listarAccesos(usuario);
+              return (
+                <React.Fragment key={usuario.uid}>
+                  <tr className={`hover:bg-brand-50/30 transition-colors ${abierto ? 'bg-brand-50/20' : ''}`}>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center">
+                        <div className={`h-11 w-11 rounded-xl flex items-center justify-center flex-shrink-0 ${rol.avatar}`}>
+                          <IconoRol size={20} />
+                        </div>
+                        <div className="ml-4 min-w-0">
+                          <div className="text-sm font-extrabold text-slate-800 flex items-center flex-wrap gap-1.5">
+                            {usuario.nombre}
+                            <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">{usuario.area || 'Sin Dato área'}</span>
+                          </div>
+                          <div className="text-sm text-slate-500 truncate">{usuario.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border ${rol.badge}`}>
+                        <IconoRol size={13} className="mr-1.5" /> {rol.texto}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
+                      <button onClick={() => handleToggleActivo(usuario.uid)} title="Clic para activar o desactivar" className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border transition-all active:scale-95 ${usuario.activo ? 'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200' : 'bg-red-100 text-red-800 border-red-200 hover:bg-red-200'}`}>
+                        {usuario.activo ? <><CheckCircle size={14} className="mr-1" /> Activo</> : <><AlertCircle size={14} className="mr-1" /> Inactivo</>}
+                      </button>
+                    </td>
+                    <td className="px-4 py-4">
+                      {usuario.ultimoAccesoISO ? (
+                        <div className="flex items-start">
+                          <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${f.punto}`} />
+                          <div className="ml-2">
+                            <p className={`text-sm font-bold ${f.texto}`}>{hace(usuario.ultimoAccesoISO)}</p>
+                            <p className="text-xs text-slate-500">{formatearFechaHora(usuario.ultimoAccesoISO)}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center text-sm text-slate-400 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-slate-300 mr-2" /> Nunca inició sesión
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex justify-end space-x-2">
+                        <button onClick={() => setDetalle(d => ({ ...d, [usuario.uid]: !d[usuario.uid] }))} className={`p-2 rounded-lg transition-colors ${abierto ? 'bg-brand-100 text-brand-700' : 'text-slate-500 hover:text-brand-600 bg-slate-100 hover:bg-brand-50'}`} title="Ver detalle del usuario"><Info size={18} /></button>
+                        <button onClick={() => { setUsuarioSeleccionado(usuario); setShowModal(true); }} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-lg transition-colors" title="Editar"><Edit3 size={18} /></button>
+                        <button onClick={() => handleDelete(usuario.uid, usuario.nombre)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-lg transition-colors" title="Eliminar"><Trash2 size={18} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                  {abierto && (
+                    <tr className="bg-slate-50/70">
+                      <td colSpan="5" className="px-6 py-5">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div className="bg-white border border-slate-200 rounded-xl p-4">
+                            <p className="flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5"><Clock size={13} className="mr-1.5 text-brand-500" /> Último inicio de sesión</p>
+                            {usuario.ultimoAccesoISO ? (
+                              <>
+                                <p className="text-sm font-extrabold text-slate-800">{formatearFechaHora(usuario.ultimoAccesoISO)}</p>
+                                <p className={`text-xs font-bold ${f.texto}`}>{hace(usuario.ultimoAccesoISO)}</p>
+                              </>
+                            ) : <p className="text-sm font-bold text-slate-400">Nunca inició sesión</p>}
+                          </div>
+                          <div className="bg-white border border-slate-200 rounded-xl p-4">
+                            <p className="flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5"><Globe size={13} className="mr-1.5 text-brand-500" /> Dirección IP</p>
+                            <p className="text-sm font-extrabold text-slate-800">{usuario.ultimoLoginIP || 'Sin registro'}</p>
+                            <p className="text-xs text-slate-500">del último inicio de sesión</p>
+                          </div>
+                          <div className="bg-white border border-slate-200 rounded-xl p-4">
+                            <p className="flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5"><CalendarClock size={13} className="mr-1.5 text-brand-500" /> Cuenta creada</p>
+                            <p className="text-sm font-extrabold text-slate-800">{usuario.fechaCreacion || 'N/A'}</p>
+                            <p className="text-xs text-slate-500">{nombreDe(usuario.creadoPor) ? `por ${nombreDe(usuario.creadoPor)}` : 'creador no registrado'}</p>
+                          </div>
+                          <div className="bg-white border border-slate-200 rounded-xl p-4">
+                            <p className="flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5"><Edit3 size={13} className="mr-1.5 text-brand-500" /> Última modificación</p>
+                            <p className="text-sm font-extrabold text-slate-800">{usuario.fechaModificacion ? formatearFechaHora(usuario.fechaModificacion) : 'Sin cambios'}</p>
+                            <p className="text-xs text-slate-500">{nombreDe(usuario.modificadoPor) ? `por ${nombreDe(usuario.modificadoPor)}` : ' '}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <p className="flex items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2"><KeyRound size={13} className="mr-1.5 text-brand-500" /> Accesos</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {accesos.length === 0
+                              ? <span className="text-xs text-slate-400 font-medium">Solo consulta (sin permisos adicionales)</span>
+                              : accesos.map(a => <span key={a} className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white border border-slate-200 text-slate-600">{a}</span>)}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -361,4 +546,5 @@ const GestionUsuarios = () => {
     </div>
   );
 };
+
 export default GestionUsuarios;
