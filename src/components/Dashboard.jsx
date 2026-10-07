@@ -1,12 +1,13 @@
 // src/components/Dashboard.jsx
 import React, { useEffect, useMemo, useState } from 'react';
+import { useScrollArriba } from '../hooks/useScrollArriba';
 import {
   BarChart2, AlertCircle, AlertTriangle, CheckCircle2, Loader2, RefreshCw, Building, Search, X, Clock,
   FileSpreadsheet, EyeOff, ChevronDown, ChevronLeft, ChevronRight, Calendar, Gauge, RotateCcw, ArrowUpDown
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import {
-  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area
+  ResponsiveContainer, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area
 } from 'recharts';
 import { useInstituciones } from '../hooks/useFirebase';
 import { generarReporteConsumoExcel } from '../utils/reporteConsumo';
@@ -55,6 +56,41 @@ const TarjetaGrafico = ({ titulo, icono: Icono, children, vacio, mensajeVacio = 
   </div>
 );
 
+// Dona de estados dibujada con SVG (sin librería de gráficos)
+const DonaConsumo = ({ datos }) => {
+  const total = datos.reduce((suma, d) => suma + d.value, 0);
+  const radio = 42;
+  const circunferencia = 2 * Math.PI * radio;
+  let acumulado = 0;
+  return (
+    <div className="relative w-40 h-40 mx-auto">
+      <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+        <circle cx="60" cy="60" r={radio} fill="none" stroke="#e2e8f0" strokeWidth="14" />
+        {datos.map((d) => {
+          const largo = (d.value / total) * circunferencia;
+          const separacion = datos.length > 1 ? 2 : 0;
+          const segmento = (
+            <circle
+              key={d.name}
+              cx="60" cy="60" r={radio} fill="none" stroke={d.color} strokeWidth="14"
+              strokeDasharray={`${Math.max(largo - separacion, 0)} ${circunferencia}`}
+              strokeDashoffset={-acumulado}
+            >
+              <title>{`${d.name}: ${d.value} ${d.value === 1 ? 'institución' : 'instituciones'}`}</title>
+            </circle>
+          );
+          acumulado += largo;
+          return segmento;
+        })}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-3xl font-black text-slate-800 leading-none">{total}</span>
+        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mt-1">instituciones</span>
+      </div>
+    </div>
+  );
+};
+
 const estiloTooltip = {
   borderRadius: '12px',
   background: 'rgba(255,255,255,0.97)',
@@ -71,6 +107,7 @@ const Dashboard = ({ onExportExcel }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [expandidas, setExpandidas] = useState({});
   const [currentPage, setCurrentPage] = useState(1);
+  useScrollArriba(currentPage);
 
   useEffect(() => { setCurrentPage(1); }, [searchTerm, filtro, orden]);
 
@@ -155,11 +192,11 @@ const Dashboard = ({ onExportExcel }) => {
     return { niveles };
   }, [seguidas]);
 
-  const datosDonut = [
+  const datosDonut = useMemo(() => [
     { name: 'Saludable', value: resumen.niveles.saludable, color: '#10b981' },
     { name: 'Atención', value: resumen.niveles.atencion, color: '#f59e0b' },
     { name: 'Crítico', value: resumen.niveles.critico, color: '#ef4444' }
-  ].filter(d => d.value > 0);
+  ].filter(d => d.value > 0), [resumen]);
 
   const datosTop = useMemo(() => seguidas
     .map(i => ({ nombre: i.nombre, ...datosUso(i) }))
@@ -303,14 +340,7 @@ const Dashboard = ({ onExportExcel }) => {
           {/* GRÁFICOS */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6 relative z-10">
             <TarjetaGrafico titulo="Estado del consumo" icono={Gauge} vacio={datosDonut.length === 0} mensajeVacio={mensajeVacio}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={datosDonut} dataKey="value" nameKey="name" innerRadius={45} outerRadius={72} paddingAngle={3} stroke="none">
-                    {datosDonut.map(d => <Cell key={d.name} fill={d.color} />)}
-                  </Pie>
-                  <Tooltip contentStyle={estiloTooltip} formatter={(v, n) => [`${v} ${v === 1 ? 'institución' : 'instituciones'}`, n]} />
-                </PieChart>
-              </ResponsiveContainer>
+              <DonaConsumo datos={datosDonut} />
               <div className="flex justify-center gap-4 -mt-1 text-xs font-bold text-slate-500">
                 {datosDonut.map(d => (
                   <span key={d.name} className="inline-flex items-center"><span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ backgroundColor: d.color }} />{d.name} ({d.value})</span>
@@ -319,12 +349,12 @@ const Dashboard = ({ onExportExcel }) => {
             </TarjetaGrafico>
 
             <TarjetaGrafico titulo="Mayor consumo (% del contrato)" icono={BarChart2} vacio={datosTop.length === 0} mensajeVacio={mensajeVacio}>
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <BarChart data={datosTop} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
                   <XAxis type="number" domain={[0, 100]} hide />
                   <YAxis type="category" dataKey="name" width={104} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} />
                   <Tooltip cursor={{ fill: 'rgba(0,0,0,0.04)' }} contentStyle={estiloTooltip} formatter={(v) => [`${v}%`, 'Uso']} labelFormatter={(_, p) => p?.[0]?.payload?.completo || ''} />
-                  <Bar dataKey="pct" radius={[0, 6, 6, 0]} barSize={14}>
+                  <Bar dataKey="pct" radius={[0, 6, 6, 0]} barSize={14} isAnimationActive={false}>
                     {datosTop.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Bar>
                 </BarChart>
@@ -332,7 +362,7 @@ const Dashboard = ({ onExportExcel }) => {
             </TarjetaGrafico>
 
             <TarjetaGrafico titulo="Consumo mensual (total)" icono={Clock} vacio={serieMensual.length === 0} mensajeVacio={mensajeVacio}>
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <AreaChart data={serieMensual} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="gradMensual" x1="0" y1="0" x2="0" y2="1">
@@ -343,7 +373,7 @@ const Dashboard = ({ onExportExcel }) => {
                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#64748b', fontWeight: 600 }} />
                   <YAxis hide />
                   <Tooltip contentStyle={estiloTooltip} formatter={(v) => [v.toLocaleString(), 'Consultas']} />
-                  <Area type="monotone" dataKey="consumo" stroke="#ff5105" strokeWidth={2} fill="url(#gradMensual)" />
+                  <Area type="monotone" dataKey="consumo" stroke="#ff5105" strokeWidth={2} fill="url(#gradMensual)" isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </TarjetaGrafico>

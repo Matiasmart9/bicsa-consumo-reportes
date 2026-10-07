@@ -1,6 +1,7 @@
 // src/components/Auditoria.jsx
 // Registro general de auditoría: quién hizo qué y cuándo, en todo el sistema.
 import React, { useEffect, useMemo, useState } from 'react';
+import { useScrollArriba } from '../hooks/useScrollArriba';
 import {
   ClipboardList, Search, X, Loader2, Lock, FileSpreadsheet, ChevronLeft, ChevronRight, RotateCcw, CalendarClock
 } from 'lucide-react';
@@ -40,6 +41,7 @@ const Auditoria = () => {
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
   const [pagina, setPagina] = useState(1);
+  useScrollArriba(pagina);
 
   useEffect(() => {
     if (cargandoPermisos || !autorizado) return undefined;

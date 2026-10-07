@@ -1,5 +1,6 @@
 // src/components/CargasXML.jsx
 import React, { useState } from 'react';
+import { useScrollArriba } from '../hooks/useScrollArriba';
 import { UploadCloud, Building, Search, FileSpreadsheet, Loader2, Calendar, FileText, CheckCircle, XCircle } from 'lucide-react';
 import { useInstituciones, logAuditoria } from '../hooks/useFirebase';
 import { db } from '../firebase';
@@ -28,6 +29,7 @@ const CargasXML = ({ userRole }) => {
 
   // 🆕 ESTADOS PARA PAGINACIÓN (Punto 2: 15 items por página)
   const [currentPage, setCurrentPage] = useState(1);
+  useScrollArriba(currentPage);
   const itemsPerPage = 15;
 
   // Permisos: Admin y Contabilidad pueden modificar.

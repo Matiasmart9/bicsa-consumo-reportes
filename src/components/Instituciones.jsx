@@ -1,5 +1,6 @@
 // src/components/Instituciones.jsx
 import React, { useState, useEffect } from 'react';
+import { useScrollArriba } from '../hooks/useScrollArriba';
 import {
   AlertOctagon,
   ArrowUpDown,
@@ -68,6 +69,7 @@ const Instituciones = () => {
   const [orden, setOrden] = useState('nombre');
   const [vista, setVista] = useState('tarjetas');
   const [currentPage, setCurrentPage] = useState(1);
+  useScrollArriba(currentPage);
   const itemsPerPage = 12;
 
   const [userRol, setUserRol] = useState(null);

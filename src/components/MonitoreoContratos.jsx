@@ -275,7 +275,9 @@ const MonitoreoContratos = ({ userRole }) => {
                         <PhoneCall size={14} className="mr-2" />
                         {n.tipo === 'vencido'
                           ? 'Contactar para regularizar o renovar el contrato.'
-                          : 'Sugerimos contactar urgentemente para renovación.'}
+                          : n.dias <= 15
+                            ? 'Contactar con la institución para la renovación.'
+                            : 'Mantener al tanto a la institución que está por vencer.'}
                       </div>
                     )}
                   </div>
