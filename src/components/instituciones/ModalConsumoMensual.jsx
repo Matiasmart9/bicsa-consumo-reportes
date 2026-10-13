@@ -13,8 +13,7 @@ import { sileo } from '../sileo';
 
 const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
   const [mes, setMes] = useState('');
-  const [consumo, setConsumo] = useState('');
-  const [ceros, setCeros] = useState({});
+  const [valores, setValores] = useState({}); // cantidad escrita para cada mes (cada mes recuerda la suya)
   const [saving, setSaving] = useState(false);
 
   const mesesDisponibles = () => {
@@ -60,64 +59,70 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
 
   const mesesPendientes = mesesDisponibles();
 
-  const handleSubmit = async () => {
-    if (mes && consumo && parseInt(consumo) >= 0) {
-      const consumoInt = parseInt(consumo);
-      const disponible = institucion.contrato.asignadas - institucion.contrato.consumidas;
-      
-      if (consumoInt > disponible) {
-        sileo.warning({ title: 'Excede el límite', description: `No puedes registrar más de ${disponible.toLocaleString()} consultas disponibles.` });
-        return;
-      }
-
-      // Al agotarse el contrato, los meses pendientes restantes deben registrarse en 0
-      const faltanMeses = mesesPendientes.filter(m => m.valor !== mes);
-      const agotado = disponible - consumoInt === 0 && faltanMeses.length > 0;
-      if (agotado && !faltanMeses.every(m => ceros[m.valor] === '0')) {
-        sileo.warning({ title: 'Faltan meses por registrar', description: 'El contrato se queda sin consultas: registra 0 en los meses pendientes para poder guardar.' });
-        return;
-      }
-
-      setSaving(true);
-      const resultado = await onSave(institucion.id, {
-        mes,
-        consumo: consumoInt,
-        adicionales: agotado ? faltanMeses.map(m => ({ mes: m.valor, consumo: 0 })) : []
-      });
-      
-      if (resultado.success) {
-        setMes('');
-        setConsumo('');
-        setCeros({});
-        onClose();
-        sileo.success({ title: 'Consumo registrado', description: `${consumoInt.toLocaleString()} consultas registradas para ${mes}${agotado ? ` y ${faltanMeses.length} ${faltanMeses.length === 1 ? 'mes cerrado' : 'meses cerrados'} en 0` : ''}.` });
-      } else {
-        sileo.error({ title: 'Error al registrar', description: resultado.error });
-      }
-      setSaving(false);
-    } else {
-      sileo.warning({ title: 'Campos incompletos', description: 'Por favor, complete todos los campos correctamente.' });
-    }
-  };
-
   const asignadas = institucion.contrato.asignadas || 0;
   const consumidas = institucion.contrato.consumidas || 0;
   const disponible = asignadas - consumidas;
-  const nuevo = parseInt(consumo) || 0;
-  const restante = disponible - nuevo;
+
+  // Cantidad del mes elegido (el campo muestra la de ese mes)
+  const consumo = mes ? (valores[mes] ?? '') : '';
+  const setConsumo = (v) => { if (mes) setValores(prev => ({ ...prev, [mes]: v })); };
+
+  const tieneValor = (m) => valores[m.valor] !== undefined && valores[m.valor] !== '';
+  const numero = (m) => { const n = parseInt(valores[m.valor], 10); return Number.isNaN(n) || n < 0 ? 0 : n; };
+  const conValor = mesesPendientes.filter(tieneValor);
+  const sinValor = mesesPendientes.filter(m => !tieneValor(m));
+  const hayInvalidos = conValor.some(m => !(parseInt(valores[m.valor], 10) >= 0));
+
+  // Todo lo escrito en todos los meses cuenta contra las consultas disponibles
+  const totalIngresado = mesesPendientes.reduce((suma, m) => suma + numero(m), 0);
+  const restante = disponible - totalIngresado;
   const excede = restante < 0;
+  const maxEsteMes = Math.max(disponible - (totalIngresado - (mes ? numero({ valor: mes }) : 0)), 0);
   const pctActual = asignadas > 0 ? Math.min((consumidas / asignadas) * 100, 100) : 0;
-  const pctNuevo = asignadas > 0 ? Math.min((nuevo / asignadas) * 100, 100 - pctActual) : 0;
+  const pctNuevo = asignadas > 0 ? Math.min((totalIngresado / asignadas) * 100, 100 - pctActual) : 0;
   const pctProyectado = pctActual + pctNuevo;
   const colorProyectado = excede || pctProyectado >= 90 ? 'bg-red-500' : pctProyectado >= 70 ? 'bg-amber-500' : 'bg-emerald-500';
   const mesElegido = mesesPendientes.find(m => m.valor === mes);
 
-  // Si este registro deja el contrato sin consultas, los demás meses pendientes deben quedar en 0
-  const otrosPendientes = mesesPendientes.filter(m => m.valor !== mes);
-  const exigeCeros = !!mes && consumo !== '' && restante === 0 && otrosPendientes.length > 0;
-  const cerosCompletos = otrosPendientes.every(m => ceros[m.valor] === '0');
-  const bloqueado = exigeCeros && !cerosCompletos;
-  const noSePuedeGuardar = !mes || consumo === '' || excede || bloqueado;
+  // Si lo escrito agota el contrato, los meses que quedan sin cantidad deben registrarse en 0
+  const exigeCeros = conValor.length > 0 && restante === 0 && sinValor.length > 0;
+  const bloqueado = exigeCeros;
+  const noSePuedeGuardar = conValor.length === 0 || excede || hayInvalidos || bloqueado;
+  const motivoBloqueo =
+    conValor.length === 0 ? (mes ? 'Ingresa la cantidad de consultas' : 'Elige un mes e ingresa la cantidad')
+    : hayInvalidos ? 'Hay cantidades inválidas'
+    : excede ? 'Lo ingresado supera las consultas disponibles'
+    : bloqueado ? 'Registra 0 en los meses pendientes para poder guardar'
+    : undefined;
+
+  const handleSubmit = async () => {
+    if (noSePuedeGuardar) {
+      sileo.warning({ title: 'No se puede guardar', description: motivoBloqueo || 'Revisa los datos ingresados.' });
+      return;
+    }
+
+    // El primer mes va como registro principal y el resto en el mismo guardado
+    const registros = conValor.map(m => ({ mes: m.valor, consumo: numero(m) }));
+    const [principal, ...adicionales] = registros;
+
+    setSaving(true);
+    const resultado = await onSave(institucion.id, { mes: principal.mes, consumo: principal.consumo, adicionales });
+
+    if (resultado.success) {
+      setValores({});
+      setMes('');
+      onClose();
+      sileo.success({
+        title: 'Consumo registrado',
+        description: registros.length === 1
+          ? `${principal.consumo.toLocaleString()} consultas registradas para ${principal.mes}.`
+          : `${registros.length} meses registrados (${totalIngresado.toLocaleString()} consultas en total).`
+      });
+    } else {
+      sileo.error({ title: 'Error al registrar', description: resultado.error });
+    }
+    setSaving(false);
+  };
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -181,12 +186,7 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                     <button
                       key={m.valor}
                       type="button"
-                      onClick={() => {
-                        if (m.valor === mes) return;
-                        setMes(m.valor);
-                        setConsumo('');
-                        setCeros({});
-                      }}
+                      onClick={() => setMes(m.valor)}
                       disabled={saving}
                       className={`px-3 py-2.5 rounded-xl border-2 text-sm font-bold capitalize transition-all ${
                         mes === m.valor
@@ -195,6 +195,11 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                       }`}
                     >
                       {m.texto}
+                      {tieneValor(m) && (
+                        <span className={`block text-xs font-extrabold mt-0.5 ${mes === m.valor ? 'text-brand-600' : 'text-emerald-600'}`}>
+                          {numero(m).toLocaleString()} consultas
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -210,18 +215,18 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                     type="number"
                     value={consumo}
                     onChange={(e) => setConsumo(e.target.value)}
-                    className="flex-1 px-4 py-3 border border-slate-200 rounded-xl bg-slate-50/60 text-lg font-bold text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 outline-none transition-all"
-                    placeholder="Ingrese cant. de consultas"
+                    className="flex-1 px-4 py-3 border border-slate-200 rounded-xl bg-slate-50/60 text-lg font-bold text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 outline-none transition-all disabled:opacity-60"
+                    placeholder={mes ? 'Ingrese cant. de consultas' : 'Elige primero el mes'}
                     min="0"
                     max={disponible}
-                    disabled={saving}
+                    disabled={saving || !mes}
                   />
                   <button
                     type="button"
-                    onClick={() => setConsumo(String(disponible))}
-                    disabled={saving || disponible <= 0}
+                    onClick={() => setConsumo(String(maxEsteMes))}
+                    disabled={saving || !mes || maxEsteMes <= 0}
                     className="px-4 py-3 text-sm font-bold text-brand-700 bg-brand-50 border border-brand-200 rounded-xl hover:bg-brand-100 transition-colors whitespace-nowrap disabled:opacity-50"
-                    title="Usar todas las consultas disponibles"
+                    title="Usar todas las consultas que quedan disponibles para este mes"
                   >
                     Máximo
                   </button>
@@ -253,31 +258,31 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                 {excede && (
                   <div className="mt-3 flex items-center text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                     <AlertTriangle size={14} className="mr-2 flex-shrink-0" />
-                    Supera las {disponible.toLocaleString()} consultas disponibles del contrato.
+                    Lo ingresado ({totalIngresado.toLocaleString()}) supera las {disponible.toLocaleString()} consultas disponibles del contrato.
                   </div>
                 )}
               </section>
 
-              {/* Meses pendientes que deben quedar en 0 cuando el contrato se agota */}
+              {/* Meses que faltan: cuando lo escrito agota el contrato deben registrarse en 0 */}
               {exigeCeros && (
-                <section className={`rounded-2xl p-5 shadow-sm border ${cerosCompletos ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-                  <h3 className={`flex items-center text-sm font-extrabold mb-1 ${cerosCompletos ? 'text-emerald-800' : 'text-amber-800'}`}>
+                <section className="rounded-2xl p-5 shadow-sm border bg-amber-50 border-amber-200">
+                  <h3 className="flex items-center text-sm font-extrabold mb-1 text-amber-800">
                     <AlertTriangle size={16} className="mr-2" /> Meses pendientes: registra 0
                   </h3>
-                  <p className={`text-xs mb-3 ${cerosCompletos ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    Con este registro el contrato se queda sin consultas. Para poder guardar, escribe <strong>0</strong> en cada mes pendiente.
+                  <p className="text-xs mb-3 text-amber-700">
+                    Con lo ingresado el contrato se queda sin consultas. Para poder guardar, escribe <strong>0</strong> en cada mes pendiente.
                   </p>
                   <div className="space-y-2">
-                    {otrosPendientes.map(m => (
+                    {sinValor.map(m => (
                       <div key={m.valor} className="flex items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2">
                         <span className="text-sm font-bold text-slate-700 capitalize">{m.texto}</span>
                         <input
                           type="text"
                           inputMode="numeric"
-                          value={ceros[m.valor] ?? ''}
+                          value={valores[m.valor] ?? ''}
                           onChange={(e) => {
-                            // Solo se acepta el 0 (o vacío): estos meses no pueden tener consumo
-                            if (e.target.value === '' || e.target.value === '0') setCeros(prev => ({ ...prev, [m.valor]: e.target.value }));
+                            // Estos meses no pueden tener consumo: solo se acepta el 0 (o vacío)
+                            if (e.target.value === '' || e.target.value === '0') setValores(prev => ({ ...prev, [m.valor]: e.target.value }));
                           }}
                           placeholder="0"
                           disabled={saving}
@@ -286,16 +291,14 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                       </div>
                     ))}
                   </div>
-                  {!cerosCompletos && (
-                    <button
-                      type="button"
-                      onClick={() => setCeros(Object.fromEntries(otrosPendientes.map(m => [m.valor, '0'])))}
-                      disabled={saving}
-                      className="mt-3 text-xs font-bold text-amber-800 bg-white border border-amber-300 hover:bg-amber-100 px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      Poner 0 en todos
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setValores(prev => ({ ...prev, ...Object.fromEntries(sinValor.map(m => [m.valor, '0'])) }))}
+                    disabled={saving}
+                    className="mt-3 text-xs font-bold text-amber-800 bg-white border border-amber-300 hover:bg-amber-100 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Poner 0 en todos
+                  </button>
                 </section>
               )}
             </div>
@@ -313,13 +316,7 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                 onClick={handleSubmit}
                 className="px-6 py-2.5 text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-md"
                 disabled={saving || noSePuedeGuardar}
-                title={
-                  !mes ? 'Elige el mes a registrar'
-                  : consumo === '' ? 'Ingresa la cantidad de consultas'
-                  : excede ? 'La cantidad supera las consultas disponibles'
-                  : bloqueado ? 'Registra 0 en los meses pendientes para poder guardar'
-                  : undefined
-                }
+                title={motivoBloqueo}
               >
                 {saving && <Loader2 size={16} className="animate-spin" />}
                 <span>{saving ? 'Registrando...' : 'Registrar Consumo'}</span>
