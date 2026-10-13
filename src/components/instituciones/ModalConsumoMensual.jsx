@@ -14,6 +14,7 @@ import { sileo } from '../sileo';
 const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
   const [mes, setMes] = useState('');
   const [consumo, setConsumo] = useState('');
+  const [ceros, setCeros] = useState({});
   const [saving, setSaving] = useState(false);
 
   const mesesDisponibles = () => {
@@ -69,17 +70,27 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
         return;
       }
 
+      // Al agotarse el contrato, los meses pendientes restantes deben registrarse en 0
+      const faltanMeses = mesesPendientes.filter(m => m.valor !== mes);
+      const agotado = disponible - consumoInt === 0 && faltanMeses.length > 0;
+      if (agotado && !faltanMeses.every(m => ceros[m.valor] === '0')) {
+        sileo.warning({ title: 'Faltan meses por registrar', description: 'El contrato se queda sin consultas: registra 0 en los meses pendientes para poder guardar.' });
+        return;
+      }
+
       setSaving(true);
       const resultado = await onSave(institucion.id, {
         mes,
-        consumo: consumoInt
+        consumo: consumoInt,
+        adicionales: agotado ? faltanMeses.map(m => ({ mes: m.valor, consumo: 0 })) : []
       });
       
       if (resultado.success) {
         setMes('');
         setConsumo('');
+        setCeros({});
         onClose();
-        sileo.success({ title: 'Consumo registrado', description: `${consumoInt.toLocaleString()} consultas registradas para ${mes}.` });
+        sileo.success({ title: 'Consumo registrado', description: `${consumoInt.toLocaleString()} consultas registradas para ${mes}${agotado ? ` y ${faltanMeses.length} ${faltanMeses.length === 1 ? 'mes cerrado' : 'meses cerrados'} en 0` : ''}.` });
       } else {
         sileo.error({ title: 'Error al registrar', description: resultado.error });
       }
@@ -100,6 +111,13 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
   const pctProyectado = pctActual + pctNuevo;
   const colorProyectado = excede || pctProyectado >= 90 ? 'bg-red-500' : pctProyectado >= 70 ? 'bg-amber-500' : 'bg-emerald-500';
   const mesElegido = mesesPendientes.find(m => m.valor === mes);
+
+  // Si este registro deja el contrato sin consultas, los demás meses pendientes deben quedar en 0
+  const otrosPendientes = mesesPendientes.filter(m => m.valor !== mes);
+  const exigeCeros = !!mes && consumo !== '' && restante === 0 && otrosPendientes.length > 0;
+  const cerosCompletos = otrosPendientes.every(m => ceros[m.valor] === '0');
+  const bloqueado = exigeCeros && !cerosCompletos;
+  const noSePuedeGuardar = !mes || consumo === '' || excede || bloqueado;
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -163,7 +181,12 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                     <button
                       key={m.valor}
                       type="button"
-                      onClick={() => setMes(m.valor)}
+                      onClick={() => {
+                        if (m.valor === mes) return;
+                        setMes(m.valor);
+                        setConsumo('');
+                        setCeros({});
+                      }}
                       disabled={saving}
                       className={`px-3 py-2.5 rounded-xl border-2 text-sm font-bold capitalize transition-all ${
                         mes === m.valor
@@ -234,6 +257,47 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
                   </div>
                 )}
               </section>
+
+              {/* Meses pendientes que deben quedar en 0 cuando el contrato se agota */}
+              {exigeCeros && (
+                <section className={`rounded-2xl p-5 shadow-sm border ${cerosCompletos ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <h3 className={`flex items-center text-sm font-extrabold mb-1 ${cerosCompletos ? 'text-emerald-800' : 'text-amber-800'}`}>
+                    <AlertTriangle size={16} className="mr-2" /> Meses pendientes: registra 0
+                  </h3>
+                  <p className={`text-xs mb-3 ${cerosCompletos ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    Con este registro el contrato se queda sin consultas. Para poder guardar, escribe <strong>0</strong> en cada mes pendiente.
+                  </p>
+                  <div className="space-y-2">
+                    {otrosPendientes.map(m => (
+                      <div key={m.valor} className="flex items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                        <span className="text-sm font-bold text-slate-700 capitalize">{m.texto}</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={ceros[m.valor] ?? ''}
+                          onChange={(e) => {
+                            // Solo se acepta el 0 (o vacío): estos meses no pueden tener consumo
+                            if (e.target.value === '' || e.target.value === '0') setCeros(prev => ({ ...prev, [m.valor]: e.target.value }));
+                          }}
+                          placeholder="0"
+                          disabled={saving}
+                          className="w-20 px-3 py-1.5 text-center border border-slate-200 rounded-lg bg-slate-50 font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {!cerosCompletos && (
+                    <button
+                      type="button"
+                      onClick={() => setCeros(Object.fromEntries(otrosPendientes.map(m => [m.valor, '0'])))}
+                      disabled={saving}
+                      className="mt-3 text-xs font-bold text-amber-800 bg-white border border-amber-300 hover:bg-amber-100 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Poner 0 en todos
+                    </button>
+                  )}
+                </section>
+              )}
             </div>
 
             {/* Pie */}
@@ -247,8 +311,15 @@ const ModalConsumoMensual = ({ institucion, onClose, onSave }) => {
               </button>
               <button
                 onClick={handleSubmit}
-                className="px-6 py-2.5 text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors flex items-center space-x-2 disabled:opacity-50 font-bold shadow-md"
-                disabled={saving}
+                className="px-6 py-2.5 text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-md"
+                disabled={saving || noSePuedeGuardar}
+                title={
+                  !mes ? 'Elige el mes a registrar'
+                  : consumo === '' ? 'Ingresa la cantidad de consultas'
+                  : excede ? 'La cantidad supera las consultas disponibles'
+                  : bloqueado ? 'Registra 0 en los meses pendientes para poder guardar'
+                  : undefined
+                }
               >
                 {saving && <Loader2 size={16} className="animate-spin" />}
                 <span>{saving ? 'Registrando...' : 'Registrar Consumo'}</span>

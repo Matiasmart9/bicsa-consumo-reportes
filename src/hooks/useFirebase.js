@@ -238,6 +238,9 @@ export const useInstituciones = () => {
         ...institucionActual.consumoPorMes, 
         [datosConsumo.mes]: datosConsumo.consumo 
       };
+      // Meses pendientes que se cierran en 0 al agotarse el contrato (todo en una sola escritura)
+      const adicionales = datosConsumo.adicionales || [];
+      adicionales.forEach(a => { nuevoConsumoMes[a.mes] = a.consumo; });
       const totalConsumido = Object.values(nuevoConsumoMes).reduce((sum, val) => sum + val, 0);
 
       await updateDoc(institucionRef, {
@@ -246,7 +249,8 @@ export const useInstituciones = () => {
       });
 
       // ✨ REGISTRAR AUDITORÍA
-      await logAuditoria(id, 'Registro de Consumo', `Registrado: ${datosConsumo.consumo} consultas para el mes ${datosConsumo.mes}`);
+      const detalleExtra = adicionales.length > 0 ? `. Meses cerrados en 0: ${adicionales.map(a => a.mes).join(', ')}` : '';
+      await logAuditoria(id, 'Registro de Consumo', `Registrado: ${datosConsumo.consumo} consultas para el mes ${datosConsumo.mes}${detalleExtra}`);
 
       return { success: true };
     } catch (error) {
